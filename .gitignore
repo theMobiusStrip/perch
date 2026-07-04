@@ -1,0 +1,9 @@
+.build/
+dist/
+.DS_Store
+*.code-workspace
+.swiftpm/
+PLAN.md
+.claude/
+.fuzz-progress
+fuzz-crashes/

@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-dmg:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Extract version
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build app + selftest
+        run: |
+          make app
+          .build/release/Perch --selftest
+
+      - name: Build DMG
+        run: SKIP_BUILD=1 scripts/build-dmg.sh "${{ steps.version.outputs.tag }}"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Perch-*.dmg
+            dist/Perch-*.sha256
+            dist/Perch-*.asc
+          body: |
+            ## Install
+
+            **Requires an Apple silicon Mac (M1 or later), macOS 14+.** The DMG is arm64-only; Intel Macs are not supported.
+
+            1. Download the `.dmg` below
+            2. Open it and drag **Perch** to **Applications**
+            3. First launch only — Perch is open-source and ad-hoc signed, not Apple-notarized, so macOS asks once:
+               - **macOS 14 (Sonoma):** right-click Perch.app → **Open** → click **Open**
+               - **macOS 15+ (Sequoia):** double-click Perch.app, close the warning, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
+            4. Register hooks — Perch menu bar icon → **Install Claude Hooks…** / **Install Codex Hooks…**, or in Terminal:
+               ```
+               /Applications/Perch.app/Contents/MacOS/Perch --install-claude-hooks
+               /Applications/Perch.app/Contents/MacOS/Perch --install-codex-hooks
+               ```
+
+            ## Verify your download
+
+            Download all three files (`.dmg`, `.sha256`, `.sha256.asc`) into the same folder.
+
+            **Step 1 — Integrity:** the DMG matches the published checksum
+
+            ```sh
+            cd ~/Downloads
+            shasum -a 256 --check Perch-*.sha256
+            # expected: Perch-…-arm64.dmg: OK
+            ```
+
+            **Step 2 — Origin:** the checksum was signed by the maintainer's GPG key
+
+            ```sh
+            curl -fsSL https://github.com/theMobiusStrip.gpg | gpg --import
+            gpg --verify Perch-*.sha256.asc Perch-*.sha256
+            # expected: Good signature from "theMobiusStrip …"
+            ```
+
+            A "not certified with a trusted signature" warning is normal — it means you haven't marked the key as trusted in your keyring; the signature itself is valid. The key is the same one that signs every commit in this repo.

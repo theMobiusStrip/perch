@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Swift version
+        run: swift --version
+      # Build-free invariant tripwire (bare-^ command anchor, read-only). Fast,
+      # so it fails before the expensive compile when an invariant is broken.
+      - name: Fitness invariants
+        run: make fitness
+      - name: Build (release)
+        run: swift build -c release
+      - name: Selftest
+        run: .build/release/Perch --selftest
+      # Metamorphic gate: a monotone violation (a more-dangerous rewrite that
+      # LOWERS the risk level) is a detection bypass and fails the build.
+      - name: Metamorphic oracle
+        run: make meta

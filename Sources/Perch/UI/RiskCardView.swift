@@ -1,0 +1,143 @@
+import SwiftUI
+import PerchCore
+
+/// The flagged-call card at the top of the expanded notch panel. Renders
+/// `feed.focused`. Purely informational: Perch never answers the agent — the
+/// decision happens in the terminal. Esc dismisses, ←/→ walk the feed
+/// (keyDown routed by NotchController).
+struct RiskCardView: View {
+    @ObservedObject var feed: RiskFeed
+
+    var body: some View {
+        if let entry = feed.focused {
+            card(for: entry)
+        }
+    }
+
+    private func card(for entry: RiskFeed.Entry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header(for: entry)
+            riskBanner(for: entry.risk)
+            inputPreview(for: entry)
+            footer(for: entry)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(accentColor(for: entry.risk).opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(accentColor(for: entry.risk).opacity(0.5), lineWidth: 1)
+        )
+    }
+
+    private func accentColor(for risk: RiskAssessment) -> Color {
+        risk.level == .danger ? .red : .orange
+    }
+
+    private func riskBanner(for risk: RiskAssessment) -> some View {
+        let color: Color = risk.level == .danger ? .red : .yellow
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Image(systemName: risk.level == .danger
+                      ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(color)
+                Text(risk.level == .danger ? "Flagged dangerous" : "Flagged for review")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(color)
+            }
+            ForEach(risk.findings, id: \.code) { finding in
+                Text("• \(finding.message)")
+                    .font(.caption2)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(7)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(color.opacity(0.14)))
+    }
+
+    // MARK: - Pieces
+
+    private func header(for entry: RiskFeed.Entry) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: entry.key.agent == .claude ? "sparkle" : "command")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(entry.key.agent == .claude ? Color.orange : Color.cyan)
+            Text(projectName(for: entry))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text("·")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Text(entry.toolName)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if feed.count > 1 {
+                Text("\(focusedPosition) of \(feed.count)  ←/→")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    private func inputPreview(for entry: RiskFeed.Entry) -> some View {
+        ScrollView(.vertical) {
+            Text(prettyInput(entry.toolInput))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+        }
+        // A couple of lines always visible, up to ~8 before it scrolls.
+        .frame(minHeight: 42, maxHeight: 110)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.black.opacity(0.35))
+        )
+    }
+
+    private func footer(for entry: RiskFeed.Entry) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                feed.dismiss(id: entry.id)
+            } label: {
+                Text("Dismiss Esc")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Spacer(minLength: 4)
+
+            Text("Perch is read-only — decide in your terminal")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private var focusedPosition: Int {
+        guard let entry = feed.focused,
+              let idx = feed.entries.firstIndex(where: { $0.id == entry.id }) else { return 1 }
+        return idx + 1
+    }
+
+    private func projectName(for entry: RiskFeed.Entry) -> String {
+        guard let cwd = entry.cwd, !cwd.isEmpty else { return "unknown" }
+        return (cwd as NSString).lastPathComponent
+    }
+
+    private func prettyInput(_ input: JSONValue) -> String {
+        if input.isNull { return "(no input)" }
+        return input.encodedString(pretty: true)
+    }
+}

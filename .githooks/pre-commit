@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Tracked pre-commit hook. Activate once per clone with `make hooks`
+# (git does not auto-run repo hooks on clone, by design).
+# Fast, build-free invariant scan; the full gate (selftest + meta) runs in CI.
+exec "$(git rev-parse --show-toplevel)/scripts/fitness.sh"
