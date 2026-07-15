@@ -21,6 +21,7 @@ enum Selftest {
         hookPayloadCommonAccessors(t)
         hookPayloadToolResponseAlias(t)
         hookPayloadStopFields(t)
+        hookPayloadPostToolUseFailureFields(t)
         hookPayloadUnknownOrMissingEventName(t)
         perchConfigDecodePreservesUnknownKeys(t)
         perchConfigEncodeRoundTripKeepsExtras(t)
@@ -44,6 +45,7 @@ enum Selftest {
         handleEnvelopeRoutesStop(t)
         handleEnvelopePermissionRequestObserveOnly(t)
         handleEnvelopePreToolUseFlagsDanger(t)
+        handleEnvelopePostToolUseFailureCompletesTimeline(t)
         handleEnvelopePostureCountsEachCallOnce(t)
         handleEnvelopeSessionEndClearsFeed(t)
         handleEnvelopeToleratesUnknownEventAndMissingSessionId(t)
@@ -65,6 +67,9 @@ enum Selftest {
         riskCatchesEvasion(t)
         integrityScannerClassifiesSurface(t)
         integrityAckAndOwnership(t)
+
+        // CodexRolloutTailer (0.144 multi-agent rollout shapes)
+        codexTailerRoutesSubagentThreads(t)
 
         // CodexHookTrust
         codexTrustRequestShapes(t)
@@ -335,6 +340,21 @@ private extension Selftest {
         t.expectEqual(payload.lastAssistantMessage, "All done.", "lastAssistantMessage")
         t.expectEqual(payload.backgroundTasks?.count, 1, "backgroundTasksCount")
         t.expectTrue(payload.stopHookActive, "stopHookActive")
+    }
+
+    @MainActor
+    static func hookPayloadPostToolUseFailureFields(_ t: Checker) {
+        t.suite("HookPayload.postToolUseFailureFields")
+        // Captured live from Claude Code 2.1.209: a failing tool call fires
+        // PostToolUseFailure instead of PostToolUse.
+        let raw = #"{"session_id":"s","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"false"},"tool_use_id":"toolu_01","error":"Exit code 1","is_interrupt":false,"duration_ms":148}"#
+        guard let json = parse(raw, t) else { return }
+        let payload = HookPayload(json)
+        t.expectEqual(payload.eventName, .postToolUseFailure, "eventName")
+        t.expectEqual(payload.toolName, "Bash", "toolName")
+        t.expectEqual(payload.toolUseId, "toolu_01", "toolUseId")
+        t.expectEqual(payload.errorMessage, "Exit code 1", "errorMessage")
+        t.expectFalse(payload.isInterrupt, "isInterrupt")
     }
 
     @MainActor
@@ -886,6 +906,34 @@ private extension Selftest {
     }
 
     @MainActor
+    static func handleEnvelopePostToolUseFailureCompletesTimeline(_ t: Checker) {
+        t.suite("SessionStore.postToolUseFailureCompletesTimeline")
+        let store = SessionStore()
+        let recorder = ReplyRecorder()
+
+        store.handleEnvelope(hookEnvelope(event: "PreToolUse", extra: [
+            "tool_name": .string("Bash"),
+            "tool_input": .object(["command": .string("false")]),
+            "tool_use_id": .string("toolu_fail"),
+        ])) { recorder.record($0) }
+        store.handleEnvelope(hookEnvelope(event: "PostToolUseFailure", extra: [
+            "tool_name": .string("Bash"),
+            "tool_use_id": .string("toolu_fail"),
+            "error": .string("Exit code 1"),
+            "is_interrupt": .bool(false),
+        ])) { recorder.record($0) }
+
+        t.expectEqual(recorder.count, 2, "repliedTwice")
+        t.expectTrue(recorder.replies.allSatisfy { $0.stdout == nil }, "allEmptyReplies")
+        guard let session = t.unwrap(store.find(agent: .claude, id: "s-1"), "sessionFound") else { return }
+        t.expectEqual(session.state, .executing, "stateStillExecuting")
+        guard let event = t.unwrap(session.timeline.last, "timelineEvent") else { return }
+        t.expectEqual(event.id, "toolu_fail", "timelineEventId")
+        t.expectTrue(event.isError, "markedError")
+        _ = t.unwrap(event.endedAt, "completedAt")
+    }
+
+    @MainActor
     static func handleEnvelopeToleratesUnknownEventAndMissingSessionId(_ t: Checker) {
         t.suite("SessionStore.toleratesUnknownEventAndMissingSessionId")
         let store = SessionStore()
@@ -902,6 +950,81 @@ private extension Selftest {
         t.expectEqual(recorder.count, 2, "missingSessionIdReplied")
         t.expectNil(recorder.replies.count > 1 ? recorder.replies[1].stdout : nil, "missingSessionIdEmptyReply")
         t.expectTrue(store.sessions.isEmpty, "noSessionForMissingSessionId")
+    }
+
+    // MARK: CodexRolloutTailer semantic layer (0.144 multi-agent)
+
+    @MainActor
+    static func codexTailerRoutesSubagentThreads(_ t: Checker) {
+        t.suite("CodexTailer.subagentThreads")
+        let store = SessionStore()
+        let usage = UsageStore()
+        let tailer = CodexRolloutTailer(store: store, usage: usage)
+
+        func meta(threadSource: String?, parent: String? = nil,
+                  source: JSONValue = .string("vscode")) -> JSONValue {
+            var p: [String: JSONValue] = [
+                "cwd": .string("/tmp/proj"),
+                "cli_version": .string("0.144.0-alpha.4"),
+                "originator": .string("Codex Desktop"),
+                "source": source,
+                "timestamp": .string("2026-07-11T21:13:30.162Z"),
+            ]
+            if let threadSource { p["thread_source"] = .string(threadSource) }
+            if let parent { p["parent_thread_id"] = .string(parent) }
+            return .object(["type": .string("session_meta"), "payload": .object(p)])
+        }
+
+        // Peer thread: session row, entrypoint from string source.
+        tailer.ingestLineForSelftest(meta(threadSource: "user"), sessionID: "parent-1")
+        guard let parent = t.unwrap(store.find(agent: .codex, id: "parent-1"), "parentCreated") else { return }
+        t.expectEqual(parent.entrypoint, "vscode", "entrypointFromSource")
+
+        // Automation thread stays visible; object source → originator fallback.
+        tailer.ingestLineForSelftest(meta(threadSource: "automation",
+                                          source: .object([:])), sessionID: "auto-1")
+        t.expectEqual(store.find(agent: .codex, id: "auto-1")?.entrypoint,
+                      "Codex Desktop", "entrypointFallsBackToOriginator")
+
+        // Subagent thread: no session row; parent badge credited once.
+        let subMeta = meta(threadSource: "subagent", parent: "parent-1",
+                           source: .object(["subagent": .object(["other": .string("guardian")])]))
+        tailer.ingestLineForSelftest(subMeta, sessionID: "sub-1")
+        t.expectNil(store.find(agent: .codex, id: "sub-1"), "noSubagentRow")
+        t.expectEqual(store.find(agent: .codex, id: "parent-1")?.subagentCount, 1, "parentCredited")
+
+        // Replayed meta + follow-up events: still no row, no double credit.
+        tailer.ingestLineForSelftest(subMeta, sessionID: "sub-1")
+        tailer.ingestLineForSelftest(.object([
+            "type": .string("event_msg"),
+            "timestamp": .string("2026-07-11T21:13:31.000Z"),
+            "payload": .object(["type": .string("task_started")]),
+        ]), sessionID: "sub-1")
+        t.expectNil(store.find(agent: .codex, id: "sub-1"), "stillNoSubagentRow")
+        t.expectEqual(store.find(agent: .codex, id: "parent-1")?.subagentCount, 1, "noDoubleCredit")
+
+        // Subagent token_count still feeds account-level rate-limit gauges.
+        tailer.ingestLineForSelftest(.object([
+            "type": .string("event_msg"),
+            "timestamp": .string("2026-07-11T21:13:32.000Z"),
+            "payload": .object([
+                "type": .string("token_count"),
+                "info": .null,
+                "rate_limits": .object([
+                    "primary": .object([
+                        "used_percent": .number(14.0),
+                        "window_minutes": .integer(300),
+                    ]),
+                ]),
+            ]),
+        ]), sessionID: "sub-1")
+        t.expectEqual(usage.codexPrimary?.usedPercentage, 14.0, "subagentRateLimitsApplied")
+
+        // Orphan subagent (parent unknown) creates no ghost parent row.
+        tailer.ingestLineForSelftest(meta(threadSource: "subagent", parent: "ghost-1",
+                                          source: .object([:])), sessionID: "sub-2")
+        t.expectNil(store.find(agent: .codex, id: "ghost-1"), "noGhostParent")
+        t.expectEqual(store.sessions.count, 2, "onlyPeerAndAutomationRows")
     }
 }
 
