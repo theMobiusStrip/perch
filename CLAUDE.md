@@ -27,7 +27,11 @@ events. SwiftPM only — there is no Xcode project.
 ## Cross-review
 
 - If you are Claude (Claude Code), run `/codex:review` on your changes before
-  committing, so Codex reviews the diff as a second pair of eyes.
+  pushing, so Codex reviews the diff as a second pair of eyes. It takes no
+  arguments — the reviewer auto-detects the diff scope (working tree or the
+  branch's committed diff).
+- For custom focus text or a more adversarial framing, use
+  `/codex:adversarial-review <instructions>` instead.
 
 ## Hard invariants
 
