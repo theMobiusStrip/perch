@@ -17,6 +17,7 @@ struct NotchRootView: View {
     @ObservedObject var integrity: IntegrityModel
     @ObservedObject var worktrees: WorktreeModel
     let openWorktrees: () -> Void
+    let openUsageHistory: () -> Void
 
     var body: some View {
         shell
@@ -114,7 +115,7 @@ struct NotchRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if state.page == .sessions {
                 WorktreeGlanceRow(model: worktrees, onOpen: openWorktrees)
-                UsageOverviewRow(history: usageHistory)
+                UsageOverviewRow(history: usageHistory, onOpen: openUsageHistory)
                 UsageGaugeStrip(usage: usage, claudeDataMissing: claudeGaugesMissing)
             }
         }

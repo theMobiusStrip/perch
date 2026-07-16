@@ -117,7 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               riskFeed: riskFeed, posture: securityPosture,
                                               usageHistory: usageHistory, integrity: integrityModel,
                                               worktrees: worktreeModel,
-                                              openWorktrees: { [weak self] in self?.openWorktreeWindow() })
+                                              openWorktrees: { [weak self] in self?.openWorktreeWindow() },
+                                              openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() })
         notchController.show()
         notch = notchController
 
@@ -252,13 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.debugWindow?.show()
             },
-            openUsageHistory: { [weak self] in
-                guard let self else { return }
-                if self.usageHistoryWindow == nil {
-                    self.usageHistoryWindow = UsageHistoryWindowController(model: self.usageHistory)
-                }
-                self.usageHistoryWindow?.show()
-            },
+            openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
             openWorktrees: { [weak self] in self?.openWorktreeWindow() },
             quit: { NSApp.terminate(nil) })
     }
@@ -268,6 +263,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             worktreeWindow = WorktreeWindowController(model: worktreeModel)
         }
         worktreeWindow?.show()
+    }
+
+    private func openUsageHistoryWindow() {
+        if usageHistoryWindow == nil {
+            usageHistoryWindow = UsageHistoryWindowController(model: usageHistory)
+        }
+        usageHistoryWindow?.show()
     }
 
     private static func runReporting(_ body: () throws -> InstallReport) -> String {

@@ -147,7 +147,8 @@ enum ShowcaseRenderer {
         let view = NotchRootView(state: state, sessions: sessions, usage: usage,
                                  riskFeed: riskFeed, posture: posture,
                                  usageHistory: usageHistory, integrity: integrity,
-                                 worktrees: worktrees, openWorktrees: {})
+                                 worktrees: worktrees, openWorktrees: {},
+                                 openUsageHistory: {})
             .frame(width: state.expandedSize.width, height: state.expandedSize.height)
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(
