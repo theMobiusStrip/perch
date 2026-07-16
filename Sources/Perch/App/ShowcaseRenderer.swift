@@ -290,9 +290,10 @@ enum ShowcaseRenderer {
             hosting.layoutSubtreeIfNeeded()
         }
 
+        let scale = Int(ProcessInfo.processInfo.environment["PERCH_SHOWCASE_SCALE"] ?? "") ?? 2
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil,
-            pixelsWide: Int(size.width) * 2, pixelsHigh: Int(size.height) * 2,
+            pixelsWide: Int(size.width) * scale, pixelsHigh: Int(size.height) * scale,
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
             throw RenderError(description: "could not allocate bitmap for \(url.lastPathComponent)")
