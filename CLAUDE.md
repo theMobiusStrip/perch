@@ -27,7 +27,11 @@ events. SwiftPM only — there is no Xcode project.
 ## Cross-review
 
 - If you are Claude (Claude Code), run `/codex:review` on your changes before
-  committing, so Codex reviews the diff as a second pair of eyes.
+  pushing, so Codex reviews the diff as a second pair of eyes. It takes no
+  arguments — the reviewer auto-detects the diff scope (working tree or the
+  branch's committed diff).
+- For custom focus text or a more adversarial framing, use
+  `/codex:adversarial-review <instructions>` instead.
 
 ## Hard invariants
 
@@ -45,8 +49,8 @@ events. SwiftPM only — there is no Xcode project.
 
 ## Layout
 
-- `Sources/PerchCore` — hook parsing, risk scoring, stores. Pure logic;
-  everything here is exercised by the selftest.
+- `Sources/PerchCore` — hook parsing, risk scoring, worktree audit model,
+  stores. Pure logic; everything here is exercised by the selftest.
 - `Sources/Perch` — the app (UI, tailers, scanners, CLI entry points).
 - `Sources/PerchBridge` — `perch-bridge`, the hook-side binary.
 - `Sources/PerchMeta`, `Sources/PerchFuzz` — offline oracles; built as
@@ -56,7 +60,12 @@ events. SwiftPM only — there is no Xcode project.
 
 - Commits: imperative subject ≤50 chars; body only when the why isn't
   obvious. No tool attributions/footers, no process narrative, no
-  conversation-context leak (sources, durations, prompts) in commit or PR text.
+  conversation-context leak (sources, durations, prompts), and no
+  machine-derived measurements — real worktree/token/file counts, disk
+  sizes, timings, local paths from the dev machine — in commit or PR
+  text. Describe behavior generically ("count · total · reclaimable"),
+  never with this machine's numbers. This class caused a full history
+  squash once; it is the leak, not just the examples in parentheses.
 - Public repo: never commit or push private data — no PLAN.md, machine
   details, credentials, or internal paths.
 - Releases are built by CI from `v*` tags (`release.yml`); never hand-build

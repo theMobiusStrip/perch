@@ -13,6 +13,7 @@ struct AppActions {
     var toggleNotch: () -> Void
     var openDebugWindow: () -> Void
     var openUsageHistory: () -> Void
+    var openWorktrees: () -> Void
     var quit: () -> Void
 }
 
@@ -33,11 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var debugWindow: DebugWindowController?
     private let usageHistory = UsageHistoryModel()
     private let integrityModel = IntegrityModel()
+    private let worktreeModel = WorktreeModel()
     private var usageRefreshTimer: Timer?
     private var integrityRefreshTimer: Timer?
+    private var worktreeRefreshTimer: Timer?
     private var updateCheckTimer: Timer?
     private let updateChecker = UpdateChecker()
     private var usageHistoryWindow: UsageHistoryWindowController?
+    private var worktreeWindow: WorktreeWindowController?
     private var cancellables = Set<AnyCancellable>()
     /// True while the notch is showing attention we raised via onAttention.
     /// Lets the session-publish observer clear notification-driven
@@ -56,7 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // User-declared regenerable scratch dirs downgrade recursive-delete
         // notifications; load once (sanitized to safe basenames) so the risk
         // assessor sees them.
-        RiskAssessor.userScratchDirs = RiskAssessor.sanitizedScratchDirs(PerchConfig.load().scratchDirs)
+        let config = PerchConfig.load()
+        RiskAssessor.userScratchDirs = RiskAssessor.sanitizedScratchDirs(config.scratchDirs)
+        worktreeModel.staleDays = config.worktreeStaleDays
 
         sessionStore.riskFeed = riskFeed
         sessionStore.usageStore = usageStore
@@ -103,15 +109,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let paths = Set(self.sessionStore.sessions.compactMap { $0.cwd })
             return paths.map { URL(fileURLWithPath: $0) }
         }
+        // Same live-cwd source keeps a running agent's worktree in `active`.
+        // Filter on isLive: ended Codex sessions stay in the store with
+        // isLive=false (no pid registry to GC them), and counting their cwds
+        // would pin finished worktrees `active` until Perch restarts.
+        worktreeModel.liveCwdsProvider = { [weak self] in
+            Set(self?.sessionStore.sessions.filter(\.isLive).compactMap { $0.cwd } ?? [])
+        }
         let notchController = NotchController(sessions: sessionStore, usage: usageStore,
                                               riskFeed: riskFeed, posture: securityPosture,
-                                              usageHistory: usageHistory, integrity: integrityModel)
+                                              usageHistory: usageHistory, integrity: integrityModel,
+                                              worktrees: worktreeModel,
+                                              openWorktrees: { [weak self] in self?.openWorktreeWindow() },
+                                              openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() })
         notchController.show()
         notch = notchController
 
         statusItem = StatusItemController(sessions: sessionStore, usage: usageStore,
                                           riskFeed: riskFeed, posture: securityPosture,
                                           updateChecker: updateChecker,
+                                          worktrees: worktreeModel,
                                           actions: makeActions())
 
         wireCrossCutting()
@@ -133,6 +150,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         integrityRefresh.tolerance = 20
         integrityRefreshTimer = integrityRefresh
+
+        // Worktree audit: garbage is slow-moving, so scan every 30min. The
+        // FIRST scan is deferred: refresh() captures live cwds at call time,
+        // and SessionStore is always empty inside this launch turn (liveness
+        // lands via async main-actor hops, first sweep at +200ms). Scanning
+        // now would see zero live sessions and could tier a live session's
+        // clean stale worktree reclaimable — the guard exists for exactly
+        // that case. 10s comfortably covers the 2s liveness cadence.
+        let firstScan = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.worktreeModel.refresh() }
+        }
+        firstScan.tolerance = 2
+        let worktreeRefresh = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.worktreeModel.refresh() }
+        }
+        worktreeRefresh.tolerance = 120
+        worktreeRefreshTimer = worktreeRefresh
 
         // Update check: one throttled GitHub GET on launch (when enabled), then
         // every 6h. checkIfStale() no-ops for dev builds and when disabled.
@@ -222,14 +256,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.debugWindow?.show()
             },
-            openUsageHistory: { [weak self] in
-                guard let self else { return }
-                if self.usageHistoryWindow == nil {
-                    self.usageHistoryWindow = UsageHistoryWindowController(model: self.usageHistory)
-                }
-                self.usageHistoryWindow?.show()
-            },
+            openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
+            openWorktrees: { [weak self] in self?.openWorktreeWindow() },
             quit: { NSApp.terminate(nil) })
+    }
+
+    private func openWorktreeWindow() {
+        if worktreeWindow == nil {
+            worktreeWindow = WorktreeWindowController(model: worktreeModel)
+        }
+        worktreeWindow?.show()
+    }
+
+    private func openUsageHistoryWindow() {
+        if usageHistoryWindow == nil {
+            usageHistoryWindow = UsageHistoryWindowController(model: usageHistory)
+        }
+        usageHistoryWindow?.show()
     }
 
     private static func runReporting(_ body: () throws -> InstallReport) -> String {

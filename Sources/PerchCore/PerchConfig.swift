@@ -20,13 +20,21 @@ public struct PerchConfig: Codable, Sendable {
     /// exists. Default on; the menu exposes a toggle. When false Perch makes
     /// zero network calls.
     public var checkForUpdates: Bool
+    /// How old (days) a clean, merged, session-free agent worktree must be
+    /// before the worktree audit calls it reclaimable. Default 7; clamped to
+    /// at least 1 so a value of 0/negative can never mark same-day worktrees
+    /// removable.
+    public var worktreeStaleDays: Int
     /// Extra keys we don't model yet — preserved verbatim.
     public var extra: [String: JSONValue]
+
+    public static let defaultWorktreeStaleDays = 7
 
     public init() {
         self.originalClaudeStatusline = nil
         self.scratchDirs = []
         self.checkForUpdates = true
+        self.worktreeStaleDays = PerchConfig.defaultWorktreeStaleDays
         self.extra = [:]
     }
 
@@ -34,6 +42,7 @@ public struct PerchConfig: Codable, Sendable {
         case originalClaudeStatusline
         case scratchDirs
         case checkForUpdates
+        case worktreeStaleDays
     }
 
     public init(from decoder: Decoder) throws {
@@ -47,6 +56,9 @@ public struct PerchConfig: Codable, Sendable {
         }
         if let v = raw["checkForUpdates"]?.boolValue {
             config.checkForUpdates = v
+        }
+        if let v = raw["worktreeStaleDays"]?.int {
+            config.worktreeStaleDays = max(1, v)
         }
         if let obj = raw.objectValue {
             let known = Set(KnownKeys.allCases.map(\.rawValue))
@@ -66,6 +78,10 @@ public struct PerchConfig: Codable, Sendable {
         // Default is true; only persist the non-default so files stay minimal.
         if !checkForUpdates {
             obj["checkForUpdates"] = .bool(false)
+        }
+        // Same discipline: only persist a staleDays that differs from default.
+        if worktreeStaleDays != PerchConfig.defaultWorktreeStaleDays {
+            obj["worktreeStaleDays"] = .number(Double(worktreeStaleDays))
         }
         try JSONValue.object(obj).encode(to: encoder)
     }

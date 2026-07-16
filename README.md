@@ -15,7 +15,7 @@ turns dangerous. Never gets in the way.
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple)](https://www.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Local only](https://img.shields.io/badge/network%20calls-zero-brightgreen)](#security-model)
+[![Local only](https://img.shields.io/badge/telemetry-zero-brightgreen)](#security-model)
 
 <img src="docs/img/notch.png" width="760" alt="Perch's notch panel: security score 75 (Elevated), a Bash call flagged dangerous — 'runs as root (sudo), downloads and pipes into a shell' — with the exact command shown, plus live session list, token totals, and rate-limit gauges">
 
@@ -41,7 +41,10 @@ hooks, memory, LaunchAgents) so a hijack that outlives the session can't hide.
 **What Perch never does.** Perch is **read-only by construction**. It never
 approves, denies, or blocks an agent — there is no code path that writes a
 decision back. Approvals stay in your terminal. A monitoring tool
-should have zero authority over the thing it monitors.
+should have zero authority over the thing it monitors. This extends to git:
+the worktree audit runs every command with `git --no-optional-locks` so even a
+`status` never writes an index, and cleanup is a clipboard of `git worktree
+remove` lines you run yourself — Perch removes nothing.
 
 ## Features
 
@@ -56,7 +59,8 @@ and what they've **left behind**:
 | 📊 **Security score** | A rolling 0–100 posture score in the notch and menu bar: −25 per danger, −5 per caution over the last hour. A quiet hour heals it back to 100. |
 | 🐦 **Every session at a glance** | Live list of all Claude Code and Codex sessions — running / waiting / idle, last message, context gauge, red badge on any session that just ran something dangerous. |
 | 🎫 **Token usage** | Today / 7-day / 30-day totals in the notch, rate-limit gauges with reset countdowns, and a full per-day / per-model / per-project dashboard (menu bar → **Token Usage…**). |
-| 🪶 **Zero footprint** | No dependencies, no network calls, ~8k lines of auditable Swift. If Perch dies, your agents don't even notice. |
+| 🌳 **Worktree housekeeping** | A read-only cross-project audit of the git worktrees agent sessions leave behind — classified `reclaimable` (clean, merged, stale), `review` (dirty or ahead of the default branch), `active` (a live session or recently touched), or `orphaned` — with disk sizes and a *Copy cleanup commands* button (menu bar → **Worktrees…**). Perch scores and reports; it never deletes. |
+| 🪶 **Zero footprint** | No dependencies, no telemetry, ~13k lines of auditable Swift. If Perch dies, your agents don't even notice. |
 
 <details>
 <summary><b>🧭 Footholds page &amp; 📊 token dashboard screenshots</b></summary>
@@ -248,9 +252,13 @@ be audited, not trusted**:
   block an agent and cannot answer a prompt; the hook overhead is a
   fire-and-forget ~10 ms, and if Perch is wedged the hook gives up on its
   own after 5 s — the agent always proceeds.
-- **100% local, zero network calls.** No HTTP client anywhere — no telemetry,
-  no analytics, no cloud detection service. Verify it yourself:
-  `grep -rn "URLSession\|NWConnection" Sources/` returns nothing.
+- **100% local detection, zero telemetry.** No analytics, no cloud detection
+  service — nothing Perch observes ever leaves your machine. The one network
+  call in the codebase is the optional update check: an unauthenticated GET
+  to the GitHub releases API, on by default, toggleable from the menu bar
+  (**Check Automatically**), and zero network when off. Verify it yourself:
+  `grep -rn "URLSession\|NWConnection" Sources/` matches only
+  [`UpdateChecker.swift`](Sources/Perch/Model/UpdateChecker.swift).
 - **The detector can't leak what it inspects.** Risk scoring is pure string
   matching in-process; flagged commands are shown to you and written to your
   local log, never sent anywhere.
@@ -278,7 +286,10 @@ be audited, not trusted**:
 Perch --version                   print the app version
 Perch --doctor                    integration + detection status
 Perch --usage-report              30-day token usage, plain text
-Perch --selftest                  run the built-in test suite (250+ assertions)
+Perch --worktree-report           cross-project stale-worktree audit, plain text
+Perch --integrity-report          persistence-surface scan, plain text
+Perch --integrity-ack [id|all]    mark flagged surface items as reviewed
+Perch --selftest                  run the built-in test suite (600+ assertions)
 Perch --install-claude-hooks      / --uninstall-claude-hooks
 Perch --install-codex-hooks       / --uninstall-codex-hooks
 Perch --trust-codex-hooks         re-trust registered Codex hooks after a config change

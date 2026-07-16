@@ -40,6 +40,16 @@ if let command = cliArgs.first {
     case "--usage-report":
         print(UsageHistoryScanner.scan(daysBack: 30).reportText)
         exit(0)
+    case "--worktree-report":
+        // Headless has no live SessionStore; read live cwds from Claude's pid
+        // registry AND recent Codex rollouts (Codex has no registry) so the
+        // `active` tier still recognises running sessions of both agents.
+        let cfg = PerchConfig.load()
+        let live = Set(IntegrityScanner.liveSessionProjectDirs().map(\.path))
+            .union(WorktreeScanner.codexLiveCwds())
+        let base = WorktreeScanner.scan(liveCwds: live, staleDays: cfg.worktreeStaleDays)
+        print(WorktreeScanner.computeSizes(base).reportText)
+        exit(0)
     case "--integrity-report":
         print(IntegrityScanner.scan(projectDirs: IntegrityScanner.liveSessionProjectDirs(),
                                     acks: IntegrityBaseline.load().acks).reportText)
@@ -113,6 +123,7 @@ if let command = cliArgs.first {
           --version                 print the app version
           --doctor                  print integration status
           --usage-report            print 30-day token usage from transcripts/rollouts
+          --worktree-report         print the cross-project stale-worktree audit (read-only)
           --integrity-report        print the current persistence-surface scan
           --integrity-ack [id|all]  mark flagged surface items as reviewed (re-flags on change)
           --selftest                run the built-in test suite

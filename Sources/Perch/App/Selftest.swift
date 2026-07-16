@@ -29,6 +29,7 @@ enum Selftest {
         perchConfigDefaultsWhenEmpty(t)
         perchConfigScratchDirsRoundTrip(t)
         perchConfigCheckForUpdatesRoundTrip(t)
+        perchConfigWorktreeStaleDaysRoundTrip(t)
         semVerParsesAndCompares(t)
         updateCheckDecision(t)
 
@@ -70,6 +71,12 @@ enum Selftest {
         riskCatchesEvasion(t)
         integrityScannerClassifiesSurface(t)
         integrityAckAndOwnership(t)
+
+        // WorktreeAudit (pure parser + classifier + cleanup)
+        worktreePorcelainParse(t)
+        worktreeClassifyMatrix(t)
+        worktreeCleanupCommands(t)
+        worktreeByteFormat(t)
 
         // CodexRolloutTailer (0.144 multi-agent rollout shapes)
         codexTailerRoutesSubagentThreads(t)
@@ -477,6 +484,36 @@ private extension Selftest {
               let reparsed = t.unwrap(try? JSONValue(parsing: data), "reparseOff") else { return }
         t.expectEqual(reparsed["checkForUpdates"]?.boolValue, false, "offSurvivesSave")
         t.expectEqual(reparsed["alwaysAllow"]?.arrayValue?.count, 0, "unknownKeyPreserved")
+    }
+
+    @MainActor
+    static func perchConfigWorktreeStaleDaysRoundTrip(_ t: Checker) {
+        t.suite("PerchConfig.worktreeStaleDaysRoundTrip")
+        // Default is 7 when the key is absent, and the default is not persisted.
+        guard let dflt = t.unwrap(try? JSONDecoder().decode(PerchConfig.self, from: Data("{}".utf8)),
+                                  "decodeDefault") else { return }
+        t.expectEqual(dflt.worktreeStaleDays, 7, "defaultsToSeven")
+        guard let dfltData = t.unwrap(try? JSONEncoder().encode(dflt), "encodeDefault"),
+              let dfltJSON = t.unwrap(try? JSONValue(parsing: dfltData), "reparseDefault") else { return }
+        t.expectNil(dfltJSON["worktreeStaleDays"], "defaultNotWritten")
+
+        // An explicit non-default value decodes, survives a save alongside
+        // unknown keys, and does not leak into `extra`.
+        let raw = #"{"worktreeStaleDays":14,"alwaysAllow":[]}"#
+        guard let cfg = t.unwrap(try? JSONDecoder().decode(PerchConfig.self, from: Data(raw.utf8)),
+                                 "decodeExplicit") else { return }
+        t.expectEqual(cfg.worktreeStaleDays, 14, "decodedFourteen")
+        t.expectFalse(cfg.extra.keys.contains("worktreeStaleDays"), "notInExtra")
+        guard let data = t.unwrap(try? JSONEncoder().encode(cfg), "encodeExplicit"),
+              let reparsed = t.unwrap(try? JSONValue(parsing: data), "reparseExplicit") else { return }
+        t.expectEqual(reparsed["worktreeStaleDays"]?.int, 14, "survivesSave")
+        t.expectEqual(reparsed["alwaysAllow"]?.arrayValue?.count, 0, "unknownKeyPreserved")
+
+        // Clamp: a zero/negative value can never mark same-day worktrees stale.
+        let clampRaw = #"{"worktreeStaleDays":0}"#
+        guard let clamped = t.unwrap(try? JSONDecoder().decode(PerchConfig.self, from: Data(clampRaw.utf8)),
+                                     "decodeClamp") else { return }
+        t.expectEqual(clamped.worktreeStaleDays, 1, "clampedToOne")
     }
 
     @MainActor
@@ -1371,6 +1408,165 @@ private func integrityAckAndOwnership(_ t: Checker) {
 /// Deterministic-ish seed for the fixture dir name (Date.now works here; only
 /// scripts forbid it, not the app binary).
 @MainActor private func root_seed() -> Double { Date().timeIntervalSince1970 }
+
+// MARK: - WorktreeAudit (pure)
+
+/// Build a WorktreeInfo with sensible defaults so each test tweaks one axis.
+private func fixtureWorktree(path: String = "/repo/.claude/worktrees/wt",
+                             isMain: Bool = false, branch: String? = "feature",
+                             detached: Bool = false, dirtyCount: Int = 0,
+                             aheadCount: Int? = 0, ageDays: Int = 30,
+                             sizeBytes: Int64? = nil, bulkBytes: Int64? = nil,
+                             hasLiveSession: Bool = false, prunable: Bool = false,
+                             locked: Bool = false, origin: WorktreeOrigin = .agent) -> WorktreeInfo {
+    WorktreeInfo(path: path, isMain: isMain, branch: branch, detached: detached,
+                 dirtyCount: dirtyCount, aheadCount: aheadCount, ageDays: ageDays,
+                 sizeBytes: sizeBytes, bulkBytes: bulkBytes,
+                 hasLiveSession: hasLiveSession, prunable: prunable, locked: locked, origin: origin)
+}
+
+@MainActor
+private func worktreePorcelainParse(_ t: Checker) {
+    t.suite("WorktreeAudit.porcelainParse")
+    // Real `git worktree list --porcelain` shape: blank-line-separated blocks,
+    // main first, branch refs need the refs/heads/ prefix stripped, plus a
+    // detached and a prunable (dir-gone) entry. Trailing blank line included.
+    let fixture = """
+    worktree /Users/e/repo
+    HEAD 1111111111111111111111111111111111111111
+    branch refs/heads/main
+
+    worktree /Users/e/repo/.claude/worktrees/feature-x
+    HEAD 2222222222222222222222222222222222222222
+    branch refs/heads/feature-x
+
+    worktree /Users/e/repo/.claude/worktrees/detached-one
+    HEAD 3333333333333333333333333333333333333333
+    detached
+
+    worktree /Users/e/repo/.claude/worktrees/gone
+    HEAD 4444444444444444444444444444444444444444
+    branch refs/heads/gone
+    prunable gitdir file points to non-existent location
+
+    """
+    let entries = WorktreeAudit.parseWorktreePorcelain(fixture)
+    t.expectEqual(entries.count, 4, "fourEntries")
+    guard entries.count == 4 else { return }
+
+    t.expectTrue(entries[0].isMain, "firstIsMain")
+    t.expectEqual(entries[0].path, "/Users/e/repo", "mainPath")
+    t.expectEqual(entries[0].branch, "main", "mainBranchStripped")
+    t.expectFalse(entries[0].detached, "mainNotDetached")
+
+    t.expectFalse(entries[1].isMain, "linkedNotMain")
+    t.expectEqual(entries[1].path, "/Users/e/repo/.claude/worktrees/feature-x", "linkedPath")
+    t.expectEqual(entries[1].branch, "feature-x", "linkedBranchStripped")
+
+    t.expectTrue(entries[2].detached, "detachedFlag")
+    t.expectNil(entries[2].branch, "detachedHasNoBranch")
+
+    t.expectTrue(entries[3].prunable, "prunableFlag")
+    t.expectEqual(entries[3].branch, "gone", "prunableStillCarriesBranch")
+
+    // A `locked` line (git worktree lock, with or without a reason) is captured.
+    let lockedEntries = WorktreeAudit.parseWorktreePorcelain("""
+    worktree /r/wt
+    HEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    branch refs/heads/keep
+    locked in use elsewhere
+
+    """)
+    t.expectEqual(lockedEntries.count, 1, "lockedParsedOne")
+    t.expectTrue(lockedEntries.first?.locked == true, "lockedFlagCaptured")
+
+    // Empty input parses to nothing (never crashes).
+    t.expectEqual(WorktreeAudit.parseWorktreePorcelain("").count, 0, "emptyIsEmpty")
+}
+
+@MainActor
+private func worktreeClassifyMatrix(_ t: Checker) {
+    t.suite("WorktreeAudit.classifyMatrix")
+    let stale = 7
+
+    // Orphaned wins even for an otherwise-clean entry.
+    t.expectEqual(classify(fixtureWorktree(prunable: true), staleDays: stale), .orphaned, "prunableOrphaned")
+    // The main worktree is never garbage.
+    t.expectEqual(classify(fixtureWorktree(isMain: true, ageDays: 999), staleDays: stale), .active, "mainActive")
+    // A live session beats a stale mtime.
+    t.expectEqual(classify(fixtureWorktree(ageDays: 90, hasLiveSession: true), staleDays: stale),
+                  .active, "liveSessionActive")
+    // Touched < 24h ago (ageDays 0), clean → active, not reclaimable.
+    t.expectEqual(classify(fixtureWorktree(ageDays: 0), staleDays: stale), .active, "freshActive")
+    // Unknown ahead-count (git error / detached w/o default) → review.
+    t.expectEqual(classify(fixtureWorktree(aheadCount: nil), staleDays: stale), .review, "unknownAheadReview")
+    // Dirty → review even when merged.
+    t.expectEqual(classify(fixtureWorktree(dirtyCount: 3), staleDays: stale), .review, "dirtyReview")
+    // Clean but ahead of default → review (removing loses commits).
+    t.expectEqual(classify(fixtureWorktree(aheadCount: 48), staleDays: stale), .review, "aheadReview")
+    // A git-locked worktree (explicit do-not-touch) is never reclaimable, even
+    // when clean, merged, and stale.
+    t.expectEqual(classify(fixtureWorktree(aheadCount: 0, ageDays: 20, locked: true), staleDays: stale),
+                  .review, "lockedReview")
+    // Clean, merged, no session, old enough → reclaimable.
+    t.expectEqual(classify(fixtureWorktree(aheadCount: 0, ageDays: 13), staleDays: stale),
+                  .reclaimable, "cleanMergedOldReclaimable")
+    // Clean, merged, but younger than staleDays → still active (too fresh).
+    t.expectEqual(classify(fixtureWorktree(aheadCount: 0, ageDays: 3), staleDays: stale),
+                  .active, "cleanMergedYoungActive")
+    // Boundary: exactly staleDays old, clean/merged → reclaimable.
+    t.expectEqual(classify(fixtureWorktree(aheadCount: 0, ageDays: 7), staleDays: stale),
+                  .reclaimable, "exactlyStaleReclaimable")
+}
+
+@MainActor
+private func worktreeCleanupCommands(_ t: Checker) {
+    t.suite("WorktreeAudit.cleanupCommands")
+    let repoPath = "/Users/e/my repo"  // a space, to exercise quoting
+    let reclaimablePath = "/Users/e/my repo/.claude/worktrees/re claim-1"
+    let reviewPath = "/Users/e/my repo/.claude/worktrees/dirty-2"
+    let activePath = "/Users/e/my repo/.claude/worktrees/live-3"
+    let repo = RepoWorktrees(repoPath: repoPath, worktrees: [
+        fixtureWorktree(path: reclaimablePath, aheadCount: 0, ageDays: 20),      // reclaimable
+        fixtureWorktree(path: reviewPath, dirtyCount: 2, ageDays: 20),           // review
+        fixtureWorktree(path: activePath, ageDays: 20, hasLiveSession: true),    // active
+    ])
+    let snap = WorktreeSnapshot(repos: [repo], staleDays: 7, reposScanned: 1,
+                                scannedAt: Date(timeIntervalSince1970: 1_800_000_000))
+    let commands = snap.cleanupCommands
+    let lines = commands.split(separator: "\n", omittingEmptySubsequences: true)
+    t.expectEqual(lines.count, 1, "onlyReclaimableEmitted")
+    t.expectTrue(commands.contains("git -C '/Users/e/my repo' worktree remove '/Users/e/my repo/.claude/worktrees/re claim-1'"),
+                 "reclaimableLineQuoted")
+    t.expectFalse(commands.contains(reviewPath), "reviewExcluded")
+    t.expectFalse(commands.contains(activePath), "activeExcluded")
+
+    // Empty snapshot → empty string (nothing to copy).
+    t.expectEqual(WorktreeSnapshot().cleanupCommands, "", "emptySnapshotEmpty")
+
+    // Copy-time liveness guard: excluding a reclaimable path drops its line
+    // (a session entered it after the scan), and an empty exclusion set is
+    // identical to the plain property.
+    t.expectEqual(snap.cleanupCommands(excludingPaths: [reclaimablePath]), "", "excludedPathDropped")
+    t.expectEqual(snap.cleanupCommands(excludingPaths: []), snap.cleanupCommands, "emptyExclusionIdentical")
+}
+
+@MainActor
+private func worktreeByteFormat(_ t: Checker) {
+    t.suite("WorktreeAudit.byteFormat")
+    // ~3 significant digits at every magnitude.
+    t.expectEqual(ByteFormat.fmt(512), "512 B", "bytes")
+    t.expectEqual(ByteFormat.fmt(1_500), "1.50 KB", "kilobytes")
+    t.expectEqual(ByteFormat.fmt(494_000_000), "494 MB", "megabytes")
+    t.expectEqual(ByteFormat.fmt(1_060_000_000), "1.06 GB", "gigabytes")
+    // Rounding boundaries never produce a 4-digit rendering: a value that
+    // would round to "1000 MB" bumps to the next unit, and one that would
+    // round to "10.00" drops a decimal.
+    t.expectEqual(ByteFormat.fmt(999_999_999), "1.00 GB", "unitBoundaryBumps")
+    t.expectEqual(ByteFormat.fmt(999_499_999), "999 MB", "justUnderBoundaryStays")
+    t.expectEqual(ByteFormat.fmt(999_999), "1.00 MB", "kbBoundaryBumps")
+    t.expectEqual(ByteFormat.fmt(9_999_999_999), "10.0 GB", "decimalBoundaryDrops")
+}
 
 // MARK: - UsageHistory aggregator
 

@@ -2,27 +2,33 @@ import SwiftUI
 
 /// Compact token-usage totals for the expanded notch panel: today / 7 days /
 /// 30 days across both agents, fed by the background transcript scan.
-/// Renders nothing until the first scan lands.
+/// Renders nothing until the first scan lands. Tapping opens the Token Usage
+/// window (same affordance as the worktree glance row).
 struct UsageOverviewRow: View {
     @ObservedObject var history: UsageHistoryModel
+    var onOpen: () -> Void
 
     var body: some View {
         if history.snapshot.grandTotal > 0 {
-            HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                Text("Tokens")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                Text(summaryText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .lineLimit(1)
+            Button(action: onOpen) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Text("Tokens")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Text(summaryText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 2)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 2)
+            .buttonStyle(.plain)
         }
     }
 

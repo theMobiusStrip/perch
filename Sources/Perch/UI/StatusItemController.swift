@@ -14,6 +14,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let riskFeed: RiskFeed
     private let posture: SecurityPosture
     private let updateChecker: UpdateChecker
+    private let worktrees: WorktreeModel
     private let actions: AppActions
 
     private let statusItem: NSStatusItem
@@ -21,12 +22,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
-         posture: SecurityPosture, updateChecker: UpdateChecker, actions: AppActions) {
+         posture: SecurityPosture, updateChecker: UpdateChecker,
+         worktrees: WorktreeModel, actions: AppActions) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
         self.posture = posture
         self.updateChecker = updateChecker
+        self.worktrees = worktrees
         self.actions = actions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -109,8 +112,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        // Worktree summary (only once scanned and non-empty).
+        if let worktreeLine = worktreeSummaryLine() {
+            menu.addItem(infoItem(worktreeLine, monospacedDigits: true))
+            menu.addItem(.separator())
+        }
+
         menu.addItem(actionItem("Show/Hide Notch Panel", #selector(toggleNotch), key: "n"))
         menu.addItem(actionItem("Token Usage…", #selector(openUsageHistory), key: "t"))
+        menu.addItem(actionItem("Worktrees…", #selector(openWorktrees), key: "w"))
         menu.addItem(actionItem("Debug Window", #selector(openDebugWindow), key: "d"))
         menu.addItem(.separator())
 
@@ -248,6 +258,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         return lines
     }
 
+    /// `Worktrees: 19 · 1.06 GB · 497 MB reclaimable` — nil until a scan lands
+    /// or when there are no worktrees; the reclaimable clause drops when zero.
+    private func worktreeSummaryLine() -> String? {
+        let snap = worktrees.snapshot
+        guard snap.scannedAt != nil, snap.totalCount > 0 else { return nil }
+        var line = "Worktrees: \(snap.totalCount) · \(ByteFormat.fmt(snap.totalBytes))"
+        if snap.reclaimableCount > 0 {
+            line += " · \(ByteFormat.fmt(snap.reclaimableBytes)) reclaimable"
+        }
+        return line
+    }
+
     private static func countdown(to date: Date) -> String {
         let seconds = date.timeIntervalSinceNow
         guard seconds > 0 else { return "now" }
@@ -308,6 +330,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func toggleNotch() { actions.toggleNotch() }
     @objc private func openDebugWindow() { actions.openDebugWindow() }
     @objc private func openUsageHistory() { actions.openUsageHistory() }
+    @objc private func openWorktrees() { actions.openWorktrees() }
     @objc private func quit() { actions.quit() }
 
     @objc private func installClaudeHooks() {
