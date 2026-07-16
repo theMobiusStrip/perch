@@ -48,9 +48,9 @@ enum ShowcaseRenderer {
     private static func renderWorktrees(to url: URL) throws {
         let model = WorktreeModel()
         model.injectSnapshot(demoWorktreeSnapshot())
-        let size = CGSize(width: 640, height: 540)
+        let size = CGSize(width: 720, height: 560)
         let view = WorktreeView(model: model)
-            .frame(width: 600, height: 500)
+            .frame(width: 680, height: 520)
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(20)
             .background(
@@ -84,9 +84,11 @@ enum ShowcaseRenderer {
     private static func renderIntegrity(to url: URL) throws {
         let model = IntegrityModel()
         model.injectSnapshot(demoIntegritySnapshot())
-        let size = CGSize(width: 560, height: 420)
+        // All showcase shots share a 760pt output width so galleries can
+        // display them at one uniform size without per-image caps.
+        let size = CGSize(width: 720, height: 540)
         let view = IntegrityView(model: model)
-            .frame(width: 520, height: 380)
+            .frame(width: 680, height: 500)
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(20)
             .background(
@@ -281,6 +283,14 @@ enum ShowcaseRenderer {
         let hosting = NSHostingView(rootView: AnyView(view))
         hosting.appearance = NSAppearance(named: .darkAqua)
         hosting.frame = NSRect(origin: .zero, size: size)
+        // A windowless layer-backed view rasterizes its layers at
+        // contentsScale 1 — cacheDisplay then upscales those bitmaps, and
+        // every text glyph ships blurry. Housing the view in a never-shown
+        // borderless window gives the layer tree the screen's backing scale
+        // (2x on Retina), so the capture below copies crisp pixels.
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
 
         // Let SwiftUI settle async layout (Charts, lazy stacks) with a few
