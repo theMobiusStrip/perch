@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let integrityModel = IntegrityModel()
     private var usageRefreshTimer: Timer?
     private var integrityRefreshTimer: Timer?
+    private var updateCheckTimer: Timer?
+    private let updateChecker = UpdateChecker()
     private var usageHistoryWindow: UsageHistoryWindowController?
     private var cancellables = Set<AnyCancellable>()
     /// True while the notch is showing attention we raised via onAttention.
@@ -109,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem = StatusItemController(sessions: sessionStore, usage: usageStore,
                                           riskFeed: riskFeed, posture: securityPosture,
+                                          updateChecker: updateChecker,
                                           actions: makeActions())
 
         wireCrossCutting()
@@ -130,6 +133,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         integrityRefresh.tolerance = 20
         integrityRefreshTimer = integrityRefresh
+
+        // Update check: one throttled GitHub GET on launch (when enabled), then
+        // every 6h. checkIfStale() no-ops for dev builds and when disabled.
+        updateChecker.checkIfStale()
+        let updateRefresh = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateChecker.checkIfStale() }
+        }
+        updateRefresh.tolerance = 600
+        updateCheckTimer = updateRefresh
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),

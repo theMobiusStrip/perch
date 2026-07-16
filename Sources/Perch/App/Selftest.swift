@@ -28,6 +28,9 @@ enum Selftest {
         perchConfigLegacyRulesRoundTripAsExtra(t)
         perchConfigDefaultsWhenEmpty(t)
         perchConfigScratchDirsRoundTrip(t)
+        perchConfigCheckForUpdatesRoundTrip(t)
+        semVerParsesAndCompares(t)
+        updateCheckDecision(t)
 
         // StoreTests
         parseWindowUsedPercentageWithUnixSecondsReset(t)
@@ -450,6 +453,70 @@ private extension Selftest {
         guard let reparsed = t.unwrap(try? JSONValue(parsing: data), "reparse") else { return }
         t.expectEqual(reparsed["scratchDirs"]?.arrayValue?.count, 2, "scratchDirsSurvivesSave")
         t.expectEqual(reparsed["alwaysAllow"]?.arrayValue?.count, 0, "unknownKeyStillPreserved")
+    }
+
+    @MainActor
+    static func perchConfigCheckForUpdatesRoundTrip(_ t: Checker) {
+        t.suite("PerchConfig.checkForUpdatesRoundTrip")
+        // Default is on when the key is absent.
+        guard let dflt = t.unwrap(try? JSONDecoder().decode(PerchConfig.self, from: Data("{}".utf8)),
+                                  "decodeDefault") else { return }
+        t.expectTrue(dflt.checkForUpdates, "defaultsOn")
+        // Default true is not persisted (files stay minimal).
+        guard let dfltData = t.unwrap(try? JSONEncoder().encode(dflt), "encodeDefault"),
+              let dfltJSON = t.unwrap(try? JSONValue(parsing: dfltData), "reparseDefault") else { return }
+        t.expectNil(dfltJSON["checkForUpdates"], "defaultNotWritten")
+
+        // Explicit false decodes and survives a save alongside unknown keys.
+        let raw = #"{"checkForUpdates":false,"alwaysAllow":[]}"#
+        guard let off = t.unwrap(try? JSONDecoder().decode(PerchConfig.self, from: Data(raw.utf8)),
+                                 "decodeOff") else { return }
+        t.expectFalse(off.checkForUpdates, "decodedOff")
+        t.expectFalse(off.extra.keys.contains("checkForUpdates"), "notInExtra")
+        guard let data = t.unwrap(try? JSONEncoder().encode(off), "encodeOff"),
+              let reparsed = t.unwrap(try? JSONValue(parsing: data), "reparseOff") else { return }
+        t.expectEqual(reparsed["checkForUpdates"]?.boolValue, false, "offSurvivesSave")
+        t.expectEqual(reparsed["alwaysAllow"]?.arrayValue?.count, 0, "unknownKeyPreserved")
+    }
+
+    @MainActor
+    static func semVerParsesAndCompares(_ t: Checker) {
+        t.suite("SemVer.parseAndCompare")
+        // Clean release tags, with and without the leading v.
+        guard let a = t.unwrap(SemVer.parse("v1.2.0"), "parseVPrefixed") else { return }
+        t.expectEqual([a.major, a.minor, a.patch], [1, 2, 0], "vPrefixedCore")
+        t.expectTrue(a.exact, "vPrefixedExact")
+        t.expectEqual(SemVer.parse("1.2.0")?.exact, true, "bareExact")
+
+        // git-describe local build → parses core, marked non-exact.
+        guard let dev = t.unwrap(SemVer.parse("1.1.0-4-g3566c79-dirty"), "parseDescribe") else { return }
+        t.expectEqual([dev.major, dev.minor, dev.patch], [1, 1, 0], "describeCore")
+        t.expectFalse(dev.exact, "describeNotExact")
+
+        // Junk / short forms reject.
+        t.expectNil(SemVer.parse("1.2"), "twoComponentNil")
+        t.expectNil(SemVer.parse("nightly"), "wordNil")
+        t.expectNil(SemVer.parse(""), "emptyNil")
+
+        // Numeric (not lexical) ordering.
+        t.expectTrue(SemVer.parse("1.2.0")! < SemVer.parse("1.10.0")!, "numericOrder")
+        t.expectTrue(SemVer.parse("2.0.0")! > SemVer.parse("1.9.9")!, "majorDominates")
+        // Same core compares equal regardless of exactness.
+        t.expectEqual(SemVer.parse("1.1.0"), SemVer.parse("1.1.0-4-gabc"), "coreEquality")
+    }
+
+    @MainActor
+    static func updateCheckDecision(_ t: Checker) {
+        t.suite("SemVer.updateDecision")
+        // The comparison the checker makes: prompt iff latest > running.
+        func newer(latest: String, than running: String) -> Bool {
+            guard let l = SemVer.parse(latest), let r = SemVer.parse(running) else { return false }
+            return l > r
+        }
+        t.expectTrue(newer(latest: "v1.2.0", than: "1.1.0"), "patchBumpPrompts")
+        t.expectFalse(newer(latest: "v1.1.0", than: "1.1.0"), "sameNoPrompt")
+        t.expectFalse(newer(latest: "v1.0.0", than: "1.1.0"), "olderNoPrompt")
+        t.expectTrue(newer(latest: "v1.10.0", than: "1.9.0"), "minorNumericPrompts")
     }
 }
 

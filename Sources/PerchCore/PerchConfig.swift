@@ -15,18 +15,25 @@ public struct PerchConfig: Codable, Sendable {
     /// instead of firing a danger notification. For project-local build-output
     /// dirs Perch can't know are ephemeral by name (e.g. `.sweep`, `.preview`).
     public var scratchDirs: [String]
+    /// Whether Perch may make its one and only network call: a periodic
+    /// unauthenticated GET to the GitHub releases API to see if a newer build
+    /// exists. Default on; the menu exposes a toggle. When false Perch makes
+    /// zero network calls.
+    public var checkForUpdates: Bool
     /// Extra keys we don't model yet — preserved verbatim.
     public var extra: [String: JSONValue]
 
     public init() {
         self.originalClaudeStatusline = nil
         self.scratchDirs = []
+        self.checkForUpdates = true
         self.extra = [:]
     }
 
     enum KnownKeys: String, CaseIterable {
         case originalClaudeStatusline
         case scratchDirs
+        case checkForUpdates
     }
 
     public init(from decoder: Decoder) throws {
@@ -37,6 +44,9 @@ public struct PerchConfig: Codable, Sendable {
         }
         if let arr = raw["scratchDirs"]?.arrayValue {
             config.scratchDirs = arr.compactMap(\.string)
+        }
+        if let v = raw["checkForUpdates"]?.boolValue {
+            config.checkForUpdates = v
         }
         if let obj = raw.objectValue {
             let known = Set(KnownKeys.allCases.map(\.rawValue))
@@ -52,6 +62,10 @@ public struct PerchConfig: Codable, Sendable {
         }
         if !scratchDirs.isEmpty {
             obj["scratchDirs"] = .array(scratchDirs.map(JSONValue.string))
+        }
+        // Default is true; only persist the non-default so files stay minimal.
+        if !checkForUpdates {
+            obj["checkForUpdates"] = .bool(false)
         }
         try JSONValue.object(obj).encode(to: encoder)
     }
