@@ -147,9 +147,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         integrityRefresh.tolerance = 20
         integrityRefreshTimer = integrityRefresh
 
-        // Worktree audit: garbage is slow-moving, so scan on launch then every
-        // 30min (background queue; git + directory walks take seconds).
-        worktreeModel.refresh()
+        // Worktree audit: garbage is slow-moving, so scan every 30min. The
+        // FIRST scan is deferred: refresh() captures live cwds at call time,
+        // and SessionStore is always empty inside this launch turn (liveness
+        // lands via async main-actor hops, first sweep at +200ms). Scanning
+        // now would see zero live sessions and could tier a live session's
+        // clean stale worktree reclaimable — the guard exists for exactly
+        // that case. 10s comfortably covers the 2s liveness cadence.
+        let firstScan = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.worktreeModel.refresh() }
+        }
+        firstScan.tolerance = 2
         let worktreeRefresh = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.worktreeModel.refresh() }
         }

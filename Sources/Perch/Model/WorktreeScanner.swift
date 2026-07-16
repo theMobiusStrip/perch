@@ -431,13 +431,17 @@ private final class SizeCache: @unchecked Sendable {
         return sized
     }
 
-    /// Drop cached sizes for paths not present in the latest scan — agent
+    /// Drop cached sizes for worktrees that have vanished from disk — agent
     /// worktrees carry unique per-session names, so without eviction a
-    /// weeks-resident app would accumulate a dead entry per worktree ever seen.
+    /// weeks-resident app would accumulate a dead entry per worktree ever
+    /// seen. Paths in the current scan are kept without a stat; paths absent
+    /// from it are evicted only when the directory is really gone, so a repo
+    /// transiently dropped by one scan (git timeout) keeps its warm entries
+    /// instead of forcing a full re-walk next time.
     func retain(_ keep: Set<String>) {
         lock.lock()
         defer { lock.unlock() }
-        store = store.filter { keep.contains($0.key) }
+        store = store.filter { keep.contains($0.key) || FileManager.default.fileExists(atPath: $0.key) }
     }
 }
 

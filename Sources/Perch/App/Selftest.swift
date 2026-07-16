@@ -76,6 +76,7 @@ enum Selftest {
         worktreePorcelainParse(t)
         worktreeClassifyMatrix(t)
         worktreeCleanupCommands(t)
+        worktreeByteFormat(t)
 
         // CodexRolloutTailer (0.144 multi-agent rollout shapes)
         codexTailerRoutesSubagentThreads(t)
@@ -1542,6 +1543,23 @@ private func worktreeCleanupCommands(_ t: Checker) {
 
     // Empty snapshot → empty string (nothing to copy).
     t.expectEqual(WorktreeSnapshot().cleanupCommands, "", "emptySnapshotEmpty")
+}
+
+@MainActor
+private func worktreeByteFormat(_ t: Checker) {
+    t.suite("WorktreeAudit.byteFormat")
+    // ~3 significant digits at every magnitude.
+    t.expectEqual(ByteFormat.fmt(512), "512 B", "bytes")
+    t.expectEqual(ByteFormat.fmt(1_500), "1.50 KB", "kilobytes")
+    t.expectEqual(ByteFormat.fmt(494_000_000), "494 MB", "megabytes")
+    t.expectEqual(ByteFormat.fmt(1_060_000_000), "1.06 GB", "gigabytes")
+    // Rounding boundaries never produce a 4-digit rendering: a value that
+    // would round to "1000 MB" bumps to the next unit, and one that would
+    // round to "10.00" drops a decimal.
+    t.expectEqual(ByteFormat.fmt(999_999_999), "1.00 GB", "unitBoundaryBumps")
+    t.expectEqual(ByteFormat.fmt(999_499_999), "999 MB", "justUnderBoundaryStays")
+    t.expectEqual(ByteFormat.fmt(999_999), "1.00 MB", "kbBoundaryBumps")
+    t.expectEqual(ByteFormat.fmt(9_999_999_999), "10.0 GB", "decimalBoundaryDrops")
 }
 
 // MARK: - UsageHistory aggregator

@@ -245,9 +245,6 @@ public struct WorktreeSnapshot: Sendable, Equatable {
     public var reclaimableCount: Int { reclaimable.count }
     public var reclaimableBytes: Int64 { reclaimable.reduce(0) { $0 + ($1.sizeBytes ?? 0) } }
 
-    /// True once at least one worktree still lacks a size (sizing in flight).
-    public var sizing: Bool { allWorktrees.contains { $0.prunable == false && $0.sizeBytes == nil } }
-
     /// Reclaimable-only cleanup, one `git worktree remove` per line, grouped by
     /// repo. Each line carries `-C <repo>` so it runs correctly from any cwd —
     /// the copied block may span several projects. Emits ONLY reclaimable
@@ -276,17 +273,22 @@ public func shellQuote(_ s: String) -> String {
 public enum ByteFormat {
     public static func fmt(_ n: Int64) -> String {
         let d = Double(n)
-        if n >= 1_000_000_000 { return scaled(d / 1_000_000_000, "GB") }
-        if n >= 1_000_000 { return scaled(d / 1_000_000, "MB") }
-        if n >= 1_000 { return scaled(d / 1_000, "KB") }
+        // Unit thresholds sit at 999.5 of the next unit so a value that would
+        // round up to "1000 MB" renders as "1.00 GB" instead — the output
+        // always keeps ~3 significant digits.
+        if d >= 999_500_000 { return scaled(d / 1_000_000_000, "GB") }
+        if d >= 999_500 { return scaled(d / 1_000_000, "MB") }
+        if d >= 1_000 { return scaled(d / 1_000, "KB") }
         return "\(n) B"
     }
 
     private static func scaled(_ v: Double, _ unit: String) -> String {
+        // Decimal cutoffs at the rounding boundary (99.95 → "100", 9.995 →
+        // "10.0"), for the same reason as the unit thresholds above.
         let decimals: Int
         switch v {
-        case 100...: decimals = 0
-        case 10...: decimals = 1
+        case 99.95...: decimals = 0
+        case 9.995...: decimals = 1
         default: decimals = 2
         }
         return String(format: "%.\(decimals)f %@", v, unit)
@@ -348,8 +350,8 @@ public extension WorktreeSnapshot {
             out.append("")
             out.append("\(repo.projectName)  (\(repo.worktrees.count) · \(ByteFormat.fmt(repo.totalBytes)))")
             for wt in sortedForDisplay(repo.worktrees) {
-                let tierLabel = tier(wt).rawValue.padding(toLength: 12, withPad: " ", startingAt: 0)
-                let name = wt.name.padding(toLength: 26, withPad: " ", startingAt: 0)
+                let tierLabel = pad(tier(wt).rawValue, to: 12)
+                let name = pad(wt.name, to: 26)
                 let size = wt.sizeBytes.map { ByteFormat.fmt($0) } ?? "…"
                 out.append("  \(tierLabel) \(name) \(size)  \(note(for: wt))")
             }
@@ -364,6 +366,14 @@ public extension WorktreeSnapshot {
             }
         }
         return out.joined(separator: "\n")
+    }
+
+    /// Column padding that NEVER truncates: a review-tier row's name is the
+    /// only identifier the user has (cleanup lines carry full paths only for
+    /// reclaimable), so an over-long name breaks alignment instead of losing
+    /// its disambiguating suffix. (`String.padding(toLength:)` would truncate.)
+    private func pad(_ s: String, to width: Int) -> String {
+        s.count >= width ? s : s + String(repeating: " ", count: width - s.count)
     }
 
     /// Rows ordered reclaimable (size desc) → review → active → orphaned.
