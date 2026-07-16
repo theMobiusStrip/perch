@@ -49,8 +49,8 @@ events. SwiftPM only — there is no Xcode project.
 
 ## Layout
 
-- `Sources/PerchCore` — hook parsing, risk scoring, stores. Pure logic;
-  everything here is exercised by the selftest.
+- `Sources/PerchCore` — hook parsing, risk scoring, worktree audit model,
+  stores. Pure logic; everything here is exercised by the selftest.
 - `Sources/Perch` — the app (UI, tailers, scanners, CLI entry points).
 - `Sources/PerchBridge` — `perch-bridge`, the hook-side binary.
 - `Sources/PerchMeta`, `Sources/PerchFuzz` — offline oracles; built as
