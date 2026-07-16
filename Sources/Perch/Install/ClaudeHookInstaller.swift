@@ -12,8 +12,9 @@ enum ClaudeHookInstaller {
 
     /// Non-decision events — installed `"async": true` so they never slow the agent.
     private static let asyncEvents: [HookEventName] = [
-        .sessionStart, .userPromptSubmit, .postToolUse, .notification, .stop,
-        .subagentStart, .subagentStop, .preCompact, .sessionEnd,
+        .sessionStart, .userPromptSubmit, .postToolUse, .postToolUseFailure,
+        .notification, .stop, .subagentStart, .subagentStop, .preCompact,
+        .sessionEnd,
     ]
     /// Sync events — Claude Code reads their stdout. Perch acks these
     /// immediately and never writes a decision; they stay sync only so the

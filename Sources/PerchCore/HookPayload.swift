@@ -1,12 +1,15 @@
 import Foundation
 
 /// Hook event names. Claude Code and Codex share this family (Codex adds
-/// PostCompact; Claude adds Notification/PreCompact/SessionEnd).
+/// PostCompact; Claude adds Notification/PreCompact/SessionEnd and, since
+/// 2.1.209, PostToolUseFailure).
 public enum HookEventName: String, Codable, Sendable, CaseIterable {
     case sessionStart = "SessionStart"
     case userPromptSubmit = "UserPromptSubmit"
     case preToolUse = "PreToolUse"
     case postToolUse = "PostToolUse"
+    /// Claude ≥2.1.209: failing tool calls fire this INSTEAD of PostToolUse.
+    case postToolUseFailure = "PostToolUseFailure"
     case permissionRequest = "PermissionRequest"
     case notification = "Notification"
     case stop = "Stop"
@@ -47,6 +50,10 @@ public struct HookPayload: Sendable {
     public var toolUseId: String? { json["tool_use_id"]?.string }
     /// Accepts both the observed field and the documented one.
     public var toolResponse: JSONValue? { json.first(of: ["tool_response", "tool_output"]) }
+    /// PostToolUseFailure (observed live on 2.1.209): `error` is a short
+    /// message ("Exit code 1"), alongside `is_interrupt` and `duration_ms`.
+    public var errorMessage: String? { json["error"]?.string }
+    public var isInterrupt: Bool { json["is_interrupt"]?.boolValue ?? false }
 
     public var prompt: String? { json["prompt"]?.string }
     public var message: String? { json["message"]?.string }

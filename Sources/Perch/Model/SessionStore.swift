@@ -142,6 +142,18 @@ final class SessionStore: ObservableObject {
             }
             reply(.empty)
 
+        case .postToolUseFailure:
+            // Claude ≥2.1.209 routes failing tool calls here; PostToolUse no
+            // longer fires for them, so this is the only completion signal.
+            upsert(agent: agent, id: sid) { s in
+                touch(&s)
+                s.state = .executing
+                if let toolUseId = payload.toolUseId {
+                    s.completeTimelineEvent(id: toolUseId, at: now, isError: true)
+                }
+            }
+            reply(.empty)
+
         case .permissionRequest:
             let toolName = payload.toolName ?? "tool"
             let risk = RiskAssessor.assess(agent: agent, toolName: toolName, input: payload.toolInput)

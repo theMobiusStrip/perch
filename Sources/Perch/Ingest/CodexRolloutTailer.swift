@@ -25,6 +25,12 @@ final class CodexRolloutTailer {
     /// Session id → a turn started with no matching complete/abort yet.
     private var turnInFlight: [String: Bool] = [:]
 
+    /// Thread ids whose session_meta declared `thread_source: "subagent"`
+    /// (0.144+ multi-agent writes each subagent as its own rollout file).
+    /// They are helper threads, not peer sessions: no store row, but their
+    /// token_count lines still carry account-level rate limits.
+    private var subagentThreads: Set<String> = []
+
     init(store: SessionStore, usage: UsageStore) {
         self.store = store
         self.usage = usage
@@ -52,6 +58,13 @@ final class CodexRolloutTailer {
 
     // MARK: - Semantic application (main actor)
 
+    /// Selftest seam: feed one parsed rollout line through the semantic layer
+    /// exactly as the engine would deliver it.
+    func ingestLineForSelftest(_ json: JSONValue, sessionID: String,
+                               path: String = "/tmp/rollout.jsonl", isSeed: Bool = false) {
+        apply(RolloutLine(sessionID: sessionID, filePath: path, json: json, isSeed: isSeed))
+    }
+
     private func apply(_ batch: RolloutBatch) {
         for line in batch.lines {
             apply(line)
@@ -62,7 +75,7 @@ final class CodexRolloutTailer {
         for id in batch.staleSeeds {
             turnInFlight[id] = false
         }
-        for (id, path) in batch.touched {
+        for (id, path) in batch.touched where !subagentThreads.contains(id) {
             store.upsert(agent: .codex, id: id) { s in
                 if s.transcriptPath == nil { s.transcriptPath = path }
                 if s.state == .unknown { s.state = .idle }
@@ -77,6 +90,22 @@ final class CodexRolloutTailer {
         let json = line.json
         let ts = Self.parseTimestamp(json["timestamp"]?.string)
         let payload = json["payload"] ?? .null
+
+        if subagentThreads.contains(line.sessionID) {
+            // Helper thread: keep only the account-level rate-limit signal.
+            switch json["type"]?.string {
+            case "token_count":
+                applyRateLimits(payload, line: line, ts: ts)
+            case "event_msg":
+                let event = Self.unwrapEventPayload(payload)
+                if event["type"]?.string == "token_count" {
+                    applyRateLimits(event, line: line, ts: ts)
+                }
+            default:
+                break
+            }
+            return
+        }
 
         switch json["type"]?.string {
         case "session_meta":
@@ -106,13 +135,31 @@ final class CodexRolloutTailer {
         } else {
             meta = payload["payload"] ?? payload
         }
+        if meta["thread_source"]?.string == "subagent" {
+            if subagentThreads.insert(line.sessionID).inserted {
+                // Credit the parent's badge, but never create a ghost parent
+                // row for a thread whose parent already aged out.
+                if let parent = meta["parent_thread_id"]?.string,
+                   store.find(agent: .codex, id: parent) != nil {
+                    store.upsert(agent: .codex, id: parent) { $0.subagentCount += 1 }
+                }
+                // A touched-map upsert from an earlier batch may have created
+                // a row before this meta was seen; drop it.
+                store.remove(agent: .codex, id: line.sessionID)
+            }
+            return
+        }
         let startedAt = Self.parseTimestamp(meta["timestamp"]?.string) ?? ts
         store.upsert(agent: .codex, id: line.sessionID) { s in
             s.transcriptPath = line.filePath
             if let cwd = meta["cwd"]?.string { s.cwd = cwd }
             if let version = meta["cli_version"]?.string { s.version = version }
             if let branch = meta["git"]?["branch"]?.string { s.gitBranch = branch }
-            if let source = meta["source"]?.string { s.entrypoint = source }
+            // 0.144 subagent metas carry an object `source`; for peer threads
+            // it stays a string, with `originator` as the fallback.
+            if let source = meta["source"]?.string ?? meta["originator"]?.string {
+                s.entrypoint = source
+            }
             if let model = meta.first(of: ["model", "model_name"])?.string { s.model = model }
             if s.startedAt == nil { s.startedAt = startedAt }
             if s.state == .unknown { s.state = .idle }
@@ -120,13 +167,17 @@ final class CodexRolloutTailer {
         }
     }
 
-    private func applyEventMessage(_ payload: JSONValue, line: RolloutLine, ts: Date?) {
-        // Payload may nest one level deep: probe payload.payload.
-        var event = payload
-        if event["type"]?.string == nil,
-           let nested = event["payload"], nested["type"]?.string != nil {
-            event = nested
+    /// Payload may nest one level deep: probe payload.payload.
+    private static func unwrapEventPayload(_ payload: JSONValue) -> JSONValue {
+        if payload["type"]?.string == nil,
+           let nested = payload["payload"], nested["type"]?.string != nil {
+            return nested
         }
+        return payload
+    }
+
+    private func applyEventMessage(_ payload: JSONValue, line: RolloutLine, ts: Date?) {
+        let event = Self.unwrapEventPayload(payload)
 
         switch event["type"]?.string {
         case "task_started", "turn_started":
@@ -189,15 +240,20 @@ final class CodexRolloutTailer {
         }
     }
 
-    private func applyTokenCount(_ payload: JSONValue, line: RolloutLine, ts: Date?) {
-        // Rate limits are account-level; don't let hours-old replayed values
-        // overwrite the gauges. Token totals are per-session cumulative
-        // counters, so replaying old ones is always correct (SET semantics).
+    /// Rate limits are account-level; don't let hours-old replayed values
+    /// overwrite the gauges.
+    private func applyRateLimits(_ payload: JSONValue, line: RolloutLine, ts: Date?) {
         let staleReplay = line.isSeed
             && (ts.map { Date().timeIntervalSince($0) > 30 * 60 } ?? true)
         if !staleReplay {
             usage.applyCodexRateLimits(payload)
         }
+    }
+
+    private func applyTokenCount(_ payload: JSONValue, line: RolloutLine, ts: Date?) {
+        // Token totals are per-session cumulative counters, so replaying old
+        // ones is always correct (SET semantics).
+        applyRateLimits(payload, line: line, ts: ts)
 
         let info = payload["info"] ?? .null
         store.upsert(agent: .codex, id: line.sessionID) { s in
@@ -218,7 +274,7 @@ final class CodexRolloutTailer {
     /// Sweep result from the engine: session id → file mtime fresh (<90s),
     /// plus ids whose rollout file stopped being tracked since the last sweep.
     private func applyLiveness(_ freshness: [String: Bool], vanished: Set<String>) {
-        for (id, fresh) in freshness {
+        for (id, fresh) in freshness where !subagentThreads.contains(id) {
             let live = fresh || (turnInFlight[id] ?? false)
             store.setCodexLive(id: id, live: live)
         }
@@ -227,6 +283,7 @@ final class CodexRolloutTailer {
         // an in-flight turn live forever.
         for id in vanished where freshness[id] == nil {
             turnInFlight.removeValue(forKey: id)
+            subagentThreads.remove(id)
             store.setCodexLive(id: id, live: false)
         }
         // Turn-state entries no longer backed by any tracked file: same.
