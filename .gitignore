@@ -7,3 +7,4 @@ PLAN.md
 .claude/
 .fuzz-progress
 fuzz-crashes/
+.vscode/launch.json

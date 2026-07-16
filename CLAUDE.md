@@ -24,6 +24,11 @@ events. SwiftPM only — there is no Xcode project.
   git won't auto-run repo hooks).
 - `make app` — assemble ad-hoc-signed `dist/Perch.app`.
 
+## Cross-review
+
+- If you are Claude (Claude Code), run `/codex:review` on your changes before
+  committing, so Codex reviews the diff as a second pair of eyes.
+
 ## Hard invariants
 
 - **Perch is read-only.** It observes and scores; it never approves, denies,
