@@ -41,7 +41,10 @@ hooks, memory, LaunchAgents) so a hijack that outlives the session can't hide.
 **What Perch never does.** Perch is **read-only by construction**. It never
 approves, denies, or blocks an agent — there is no code path that writes a
 decision back. Approvals stay in your terminal. A monitoring tool
-should have zero authority over the thing it monitors.
+should have zero authority over the thing it monitors. This extends to git:
+the worktree audit runs every command with `git --no-optional-locks` so even a
+`status` never writes an index, and cleanup is a clipboard of `git worktree
+remove` lines you run yourself — Perch removes nothing.
 
 ## Features
 
@@ -56,6 +59,7 @@ and what they've **left behind**:
 | 📊 **Security score** | A rolling 0–100 posture score in the notch and menu bar: −25 per danger, −5 per caution over the last hour. A quiet hour heals it back to 100. |
 | 🐦 **Every session at a glance** | Live list of all Claude Code and Codex sessions — running / waiting / idle, last message, context gauge, red badge on any session that just ran something dangerous. |
 | 🎫 **Token usage** | Today / 7-day / 30-day totals in the notch, rate-limit gauges with reset countdowns, and a full per-day / per-model / per-project dashboard (menu bar → **Token Usage…**). |
+| 🌳 **Worktree housekeeping** | A read-only cross-project audit of the git worktrees agent sessions leave behind — classified `reclaimable` (clean, merged, stale), `review` (dirty or ahead of the default branch), `active` (a live session or recently touched), or `orphaned` — with disk sizes and a *Copy cleanup commands* button (menu bar → **Worktrees…**). Perch scores and reports; it never deletes. |
 | 🪶 **Zero footprint** | No dependencies, no network calls, ~8k lines of auditable Swift. If Perch dies, your agents don't even notice. |
 
 <details>

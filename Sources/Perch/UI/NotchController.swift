@@ -30,6 +30,8 @@ final class NotchController {
     private let posture: SecurityPosture
     private let usageHistory: UsageHistoryModel
     private let integrity: IntegrityModel
+    private let worktrees: WorktreeModel
+    private let openWorktrees: () -> Void
 
     private let state = NotchViewState()
     private var panel: NotchPanel?
@@ -46,13 +48,16 @@ final class NotchController {
 
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
          posture: SecurityPosture, usageHistory: UsageHistoryModel,
-         integrity: IntegrityModel) {
+         integrity: IntegrityModel, worktrees: WorktreeModel,
+         openWorktrees: @escaping () -> Void) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
         self.posture = posture
         self.usageHistory = usageHistory
         self.integrity = integrity
+        self.worktrees = worktrees
+        self.openWorktrees = openWorktrees
         state.controller = self
     }
 
@@ -177,7 +182,8 @@ final class NotchController {
         let panel = NotchPanel(contentRect: geo.windowFrame)
         let root = NotchRootView(state: state, sessions: sessions, usage: usage,
                                  riskFeed: riskFeed, posture: posture,
-                                 usageHistory: usageHistory, integrity: integrity)
+                                 usageHistory: usageHistory, integrity: integrity,
+                                 worktrees: worktrees, openWorktrees: openWorktrees)
         let hosting = NotchHostingView(rootView: root)
         hosting.sizingOptions = []  // window frame is static; never autosize
         hosting.frame = NSRect(origin: .zero, size: geo.windowFrame.size)

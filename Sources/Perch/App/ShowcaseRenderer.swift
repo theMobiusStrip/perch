@@ -59,6 +59,7 @@ enum ShowcaseRenderer {
         let posture = SecurityPosture()
         let usageHistory = UsageHistoryModel()
         let integrity = IntegrityModel()
+        let worktrees = WorktreeModel()
         sessions.riskFeed = riskFeed
         sessions.usageStore = usage
 
@@ -145,7 +146,8 @@ enum ShowcaseRenderer {
                           height: state.expandedSize.height + 48)
         let view = NotchRootView(state: state, sessions: sessions, usage: usage,
                                  riskFeed: riskFeed, posture: posture,
-                                 usageHistory: usageHistory, integrity: integrity)
+                                 usageHistory: usageHistory, integrity: integrity,
+                                 worktrees: worktrees, openWorktrees: {})
             .frame(width: state.expandedSize.width, height: state.expandedSize.height)
             .frame(width: size.width, height: size.height, alignment: .top)
             .background(

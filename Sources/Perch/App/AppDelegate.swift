@@ -13,6 +13,7 @@ struct AppActions {
     var toggleNotch: () -> Void
     var openDebugWindow: () -> Void
     var openUsageHistory: () -> Void
+    var openWorktrees: () -> Void
     var quit: () -> Void
 }
 
@@ -33,11 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var debugWindow: DebugWindowController?
     private let usageHistory = UsageHistoryModel()
     private let integrityModel = IntegrityModel()
+    private let worktreeModel = WorktreeModel()
     private var usageRefreshTimer: Timer?
     private var integrityRefreshTimer: Timer?
+    private var worktreeRefreshTimer: Timer?
     private var updateCheckTimer: Timer?
     private let updateChecker = UpdateChecker()
     private var usageHistoryWindow: UsageHistoryWindowController?
+    private var worktreeWindow: WorktreeWindowController?
     private var cancellables = Set<AnyCancellable>()
     /// True while the notch is showing attention we raised via onAttention.
     /// Lets the session-publish observer clear notification-driven
@@ -56,7 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // User-declared regenerable scratch dirs downgrade recursive-delete
         // notifications; load once (sanitized to safe basenames) so the risk
         // assessor sees them.
-        RiskAssessor.userScratchDirs = RiskAssessor.sanitizedScratchDirs(PerchConfig.load().scratchDirs)
+        let config = PerchConfig.load()
+        RiskAssessor.userScratchDirs = RiskAssessor.sanitizedScratchDirs(config.scratchDirs)
+        worktreeModel.staleDays = config.worktreeStaleDays
 
         sessionStore.riskFeed = riskFeed
         sessionStore.usageStore = usageStore
@@ -103,15 +109,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let paths = Set(self.sessionStore.sessions.compactMap { $0.cwd })
             return paths.map { URL(fileURLWithPath: $0) }
         }
+        // Same live-cwd source keeps a running agent's worktree in `active`.
+        worktreeModel.liveCwdsProvider = { [weak self] in
+            Set(self?.sessionStore.sessions.compactMap { $0.cwd } ?? [])
+        }
         let notchController = NotchController(sessions: sessionStore, usage: usageStore,
                                               riskFeed: riskFeed, posture: securityPosture,
-                                              usageHistory: usageHistory, integrity: integrityModel)
+                                              usageHistory: usageHistory, integrity: integrityModel,
+                                              worktrees: worktreeModel,
+                                              openWorktrees: { [weak self] in self?.openWorktreeWindow() })
         notchController.show()
         notch = notchController
 
         statusItem = StatusItemController(sessions: sessionStore, usage: usageStore,
                                           riskFeed: riskFeed, posture: securityPosture,
                                           updateChecker: updateChecker,
+                                          worktrees: worktreeModel,
                                           actions: makeActions())
 
         wireCrossCutting()
@@ -133,6 +146,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         integrityRefresh.tolerance = 20
         integrityRefreshTimer = integrityRefresh
+
+        // Worktree audit: garbage is slow-moving, so scan on launch then every
+        // 30min (background queue; git + directory walks take seconds).
+        worktreeModel.refresh()
+        let worktreeRefresh = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.worktreeModel.refresh() }
+        }
+        worktreeRefresh.tolerance = 120
+        worktreeRefreshTimer = worktreeRefresh
 
         // Update check: one throttled GitHub GET on launch (when enabled), then
         // every 6h. checkIfStale() no-ops for dev builds and when disabled.
@@ -229,7 +251,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.usageHistoryWindow?.show()
             },
+            openWorktrees: { [weak self] in self?.openWorktreeWindow() },
             quit: { NSApp.terminate(nil) })
+    }
+
+    private func openWorktreeWindow() {
+        if worktreeWindow == nil {
+            worktreeWindow = WorktreeWindowController(model: worktreeModel)
+        }
+        worktreeWindow?.show()
     }
 
     private static func runReporting(_ body: () throws -> InstallReport) -> String {
