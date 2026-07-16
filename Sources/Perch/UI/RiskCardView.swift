@@ -7,6 +7,9 @@ import PerchCore
 /// (keyDown routed by NotchController).
 struct RiskCardView: View {
     @ObservedObject var feed: RiskFeed
+    /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
+    /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
+    var renderStatic = false
 
     var body: some View {
         if let entry = feed.focused {
@@ -88,13 +91,14 @@ struct RiskCardView: View {
     }
 
     private func inputPreview(for entry: RiskFeed.Entry) -> some View {
-        ScrollView(.vertical) {
-            Text(prettyInput(entry.toolInput))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
+        Group {
+            if renderStatic {
+                inputText(for: entry)
+            } else {
+                ScrollView(.vertical) {
+                    inputText(for: entry)
+                }
+            }
         }
         // A couple of lines always visible, up to ~8 before it scrolls.
         .frame(minHeight: 42, maxHeight: 110)
@@ -102,6 +106,15 @@ struct RiskCardView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.black.opacity(0.35))
         )
+    }
+
+    private func inputText(for entry: RiskFeed.Entry) -> some View {
+        Text(prettyInput(entry.toolInput))
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
     }
 
     private func footer(for entry: RiskFeed.Entry) -> some View {

@@ -38,6 +38,9 @@ final class WorktreeWindowController {
 
 struct WorktreeView: View {
     @ObservedObject var model: WorktreeModel
+    /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
+    /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
+    var renderStatic = false
     @State private var copied = false
 
     private var snapshot: WorktreeSnapshot { model.snapshot }
@@ -116,16 +119,22 @@ struct WorktreeView: View {
             centered(model.scanning ? "Scanning projects…" : "…")
         } else if snapshot.totalCount == 0 {
             centered("No worktrees found in your projects.")
+        } else if renderStatic {
+            listContent
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(snapshot.repos.sorted { $0.totalBytes > $1.totalBytes }) { repo in
-                        section(repo)
-                    }
-                }
-                .padding(.vertical, 2)
+                listContent
             }
         }
+    }
+
+    private var listContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(snapshot.repos.sorted { $0.totalBytes > $1.totalBytes }) { repo in
+                section(repo)
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     private func section(_ repo: RepoWorktrees) -> some View {
