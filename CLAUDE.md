@@ -60,7 +60,12 @@ events. SwiftPM only — there is no Xcode project.
 
 - Commits: imperative subject ≤50 chars; body only when the why isn't
   obvious. No tool attributions/footers, no process narrative, no
-  conversation-context leak (sources, durations, prompts) in commit or PR text.
+  conversation-context leak (sources, durations, prompts), and no
+  machine-derived measurements — real worktree/token/file counts, disk
+  sizes, timings, local paths from the dev machine — in commit or PR
+  text. Describe behavior generically ("count · total · reclaimable"),
+  never with this machine's numbers. This class caused a full history
+  squash once; it is the leak, not just the examples in parentheses.
 - Public repo: never commit or push private data — no PLAN.md, machine
   details, credentials, or internal paths.
 - Releases are built by CI from `v*` tags (`release.yml`); never hand-build
