@@ -13,6 +13,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let usage: UsageStore
     private let riskFeed: RiskFeed
     private let posture: SecurityPosture
+    private let updateChecker: UpdateChecker
     private let actions: AppActions
 
     private let statusItem: NSStatusItem
@@ -20,11 +21,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
-         posture: SecurityPosture, actions: AppActions) {
+         posture: SecurityPosture, updateChecker: UpdateChecker, actions: AppActions) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
         self.posture = posture
+        self.updateChecker = updateChecker
         self.actions = actions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -78,6 +80,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+
+        // Opening the menu is a good moment to refresh (throttled, non-blocking).
+        updateChecker.checkIfStale()
 
         // Security posture.
         menu.addItem(infoItem("Security \(posture.score)/100 — \(posture.grade.rawValue)",
@@ -134,8 +139,35 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(loginItem)
         menu.addItem(.separator())
 
+        addUpdateItems(to: menu)
         menu.addItem(actionItem("About Perch (\(AppVersion.string))", #selector(showAbout)))
         menu.addItem(actionItem("Quit Perch", #selector(quit), key: "q"))
+    }
+
+    // MARK: - Update section
+
+    private func addUpdateItems(to menu: NSMenu) {
+        switch updateChecker.state {
+        case .available(let release):
+            let label = "Download Perch \(release.tag)…"
+            let item = actionItem(label, #selector(openUpdate))
+            let bold = NSFontManager.shared.convert(NSFont.menuFont(ofSize: 0),
+                                                    toHaveTrait: .boldFontMask)
+            item.attributedTitle = NSAttributedString(string: label, attributes: [.font: bold])
+            item.image = NSImage(systemSymbolName: "arrow.down.circle.fill",
+                                 accessibilityDescription: "Update available")?
+                .withSymbolConfiguration(.init(paletteColors: [.controlAccentColor]))
+            menu.addItem(item)
+        case .checking:
+            menu.addItem(infoItem("Checking for Updates…"))
+        default:
+            menu.addItem(actionItem("Check for Updates…", #selector(checkForUpdates)))
+        }
+
+        let autoItem = actionItem("Check Automatically", #selector(toggleAutoUpdate))
+        autoItem.state = updateChecker.autoCheckEnabled ? .on : .off
+        menu.addItem(autoItem)
+        menu.addItem(.separator())
     }
 
     // MARK: - Menu item builders
@@ -298,13 +330,58 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         showText(actions.doctorReport(), title: "Perch Doctor")
     }
 
+    // MARK: - Update actions
+
+    @objc private func openUpdate() {
+        updateChecker.openLatest()
+    }
+
+    @objc private func checkForUpdates() {
+        updateChecker.checkManually { [weak self] state in
+            self?.presentUpdateResult(state)
+        }
+    }
+
+    @objc private func toggleAutoUpdate() {
+        updateChecker.setAutoCheck(!updateChecker.autoCheckEnabled)
+    }
+
+    private func presentUpdateResult(_ state: UpdateChecker.State) {
+        switch state {
+        case .available(let release):
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = "Perch \(release.tag) is available"
+            alert.informativeText = "You're running \(AppVersion.string). Open the release page to download it."
+            alert.addButton(withTitle: "Download…")
+            alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn {
+                updateChecker.openLatest()
+            }
+        case .upToDate:
+            showText("You're up to date (\(AppVersion.string)).", title: "Check for Updates")
+        case .devBuild:
+            showText("This is a development build — update checks are disabled.",
+                     title: "Check for Updates")
+        case .failed(let message):
+            showText("Couldn't check for updates:\n\(message)", title: "Check for Updates")
+        case .checking, .unknown:
+            break
+        }
+    }
+
     @objc private func showAbout() {
+        // Honest about the one network call: it exists only when the update
+        // check is enabled.
+        let networkLine = updateChecker.autoCheckEnabled
+            ? "100% local · one network call: GitHub update check · MIT license"
+            : "100% local · zero network calls · MIT license"
         showText("""
         Perch \(AppVersion.string)
         Read-only security watchtower for Claude Code and Codex.
 
         https://github.com/theMobiusStrip/perch
-        100% local · zero network calls · MIT license
+        \(networkLine)
         """, title: "About Perch")
     }
 
