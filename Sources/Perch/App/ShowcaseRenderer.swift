@@ -12,6 +12,53 @@ enum ShowcaseRenderer {
         try renderNotch(to: dir.appendingPathComponent("notch.png"))
         try renderIntegrity(to: dir.appendingPathComponent("integrity.png"))
         try renderUsage(to: dir.appendingPathComponent("usage.png"))
+        try renderWorktrees(to: dir.appendingPathComponent("worktrees.png"))
+    }
+
+    /// Synthetic worktree audit covering all four tiers.
+    static func demoWorktreeSnapshot() -> WorktreeSnapshot {
+        func wt(_ path: String, branch: String? = nil, detached: Bool = false,
+                dirty: Int = 0, ahead: Int? = 0, age: Int, size: Int64, bulk: Int64 = 0,
+                live: Bool = false, prunable: Bool = false) -> WorktreeInfo {
+            WorktreeInfo(path: path, isMain: false, branch: branch, detached: detached,
+                         dirtyCount: dirty, aheadCount: ahead, ageDays: age,
+                         sizeBytes: size, bulkBytes: bulk,
+                         hasLiveSession: live, prunable: prunable, origin: .agent)
+        }
+        let api = RepoWorktrees(repoPath: "/Users/dev/api-server", worktrees: [
+            wt("/Users/dev/api-server/.claude/worktrees/mystifying-bouman-3e7ab0",
+               detached: true, age: 13, size: 494_000_000, bulk: 480_000_000),
+            wt("/Users/dev/api-server/.claude/worktrees/compassionate-morse-f845b1",
+               branch: "retry-queue", ahead: 48, age: 7, size: 1_700_000),
+            wt("/Users/dev/api-server/.claude/worktrees/gifted-golick-68d30a",
+               branch: "rate-limiting", age: 0, size: 245_000_000, bulk: 230_000_000, live: true),
+            wt("/Users/dev/api-server/.claude/worktrees/sleepy-hopper-91c2aa",
+               branch: "spike-cache", age: 21, size: 0, prunable: true),
+        ])
+        let app = RepoWorktrees(repoPath: "/Users/dev/my-app", worktrees: [
+            wt("/Users/dev/my-app/.claude/worktrees/eager-noether-4b81d3",
+               branch: "fix-onboarding", age: 9, size: 320_000),
+            wt("/Users/dev/my-app/.claude/worktrees/vibrant-lovelace-77e0c2",
+               branch: "dark-mode", dirty: 3, age: 5, size: 41_000_000, bulk: 38_000_000),
+        ])
+        return WorktreeSnapshot(repos: [api, app], staleDays: 7, reposScanned: 2,
+                                scannedAt: Date())
+    }
+
+    private static func renderWorktrees(to url: URL) throws {
+        let model = WorktreeModel()
+        model.injectSnapshot(demoWorktreeSnapshot())
+        let size = CGSize(width: 640, height: 540)
+        let view = WorktreeView(model: model)
+            .frame(width: 600, height: 500)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .padding(20)
+            .background(
+                LinearGradient(colors: [Color(red: 0.12, green: 0.13, blue: 0.22),
+                                        Color(red: 0.05, green: 0.05, blue: 0.09)],
+                               startPoint: .top, endPoint: .bottom))
+            .environment(\.colorScheme, .dark)
+        try writePNG(view, size: CGSize(width: size.width + 40, height: size.height + 40), to: url)
     }
 
     static func demoIntegritySnapshot() -> IntegritySnapshot {
@@ -60,6 +107,7 @@ enum ShowcaseRenderer {
         let usageHistory = UsageHistoryModel()
         let integrity = IntegrityModel()
         let worktrees = WorktreeModel()
+        worktrees.injectSnapshot(demoWorktreeSnapshot())  // glance line renders
         sessions.riskFeed = riskFeed
         sessions.usageStore = usage
 
