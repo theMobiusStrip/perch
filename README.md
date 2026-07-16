@@ -17,7 +17,7 @@ turns dangerous. Never gets in the way.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Local only](https://img.shields.io/badge/telemetry-zero-brightgreen)](#security-model)
 
-<img src="docs/img/notch.png" width="760" alt="Perch's notch panel: security score 75 (Elevated), a Bash call flagged dangerous — 'runs as root (sudo), downloads and pipes into a shell' — with the exact command shown, plus live session list, token totals, and rate-limit gauges">
+<img src="docs/img/notch.png" width="760" alt="Perch's notch panel: security score 75 (Elevated), a Bash call flagged dangerous — 'runs as root (sudo), downloads and pipes into a shell' — with the exact command shown, plus worktree and token glance lines and rate-limit gauges">
 
 </div>
 
@@ -63,9 +63,11 @@ and what they've **left behind**:
 | 🪶 **Zero footprint** | No dependencies, no telemetry, ~13k lines of auditable Swift. If Perch dies, your agents don't even notice. |
 
 <details>
-<summary><b>🧭 Footholds page &amp; 📊 token dashboard screenshots</b></summary>
+<summary><b>🧭 Footholds · 🌳 Worktrees · 📊 token dashboard screenshots</b></summary>
 <div align="center">
 <img src="docs/img/integrity.png" width="560" alt="Footholds page: agent-config, instructions/memory, and system-persistence surfaces with per-item state — a non-Perch hook in settings.json, recently-changed project CLAUDE.md files, LaunchAgents and shell profiles">
+<br><br>
+<img src="docs/img/worktrees.png" width="640" alt="Worktrees window: summary tiles for count, total size, and reclaimable bytes; per-project rows with reclaimable / review / active / orphaned tier badges, dirty-file and commits-ahead notes, and a Copy cleanup commands button — read-only, Perch never deletes">
 <br><br>
 <img src="docs/img/usage.png" width="680" alt="Token usage dashboard: daily stacked chart plus per-day, per-model and per-project breakdowns">
 </div>
