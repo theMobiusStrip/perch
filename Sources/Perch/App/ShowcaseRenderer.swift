@@ -48,9 +48,9 @@ enum ShowcaseRenderer {
     private static func renderWorktrees(to url: URL) throws {
         let model = WorktreeModel()
         model.injectSnapshot(demoWorktreeSnapshot())
-        let size = CGSize(width: 720, height: 560)
-        let view = WorktreeView(model: model)
-            .frame(width: 680, height: 520)
+        let size = CGSize(width: 720, height: 480)
+        let view = WorktreeView(model: model, renderStatic: true)
+            .frame(width: 680, height: 440, alignment: .top)
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(20)
             .background(
@@ -86,9 +86,9 @@ enum ShowcaseRenderer {
         model.injectSnapshot(demoIntegritySnapshot())
         // All showcase shots share a 760pt output width so galleries can
         // display them at one uniform size without per-image caps.
-        let size = CGSize(width: 720, height: 540)
-        let view = IntegrityView(model: model)
-            .frame(width: 680, height: 500)
+        let size = CGSize(width: 720, height: 430)
+        let view = IntegrityView(model: model, renderStatic: true)
+            .frame(width: 680, height: 390, alignment: .top)
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(20)
             .background(
@@ -191,6 +191,11 @@ enum ShowcaseRenderer {
         state.isExpanded = true
         state.hasAttention = true
         state.hasNotch = true
+        // The static (non-scrolling) session list needs more vertical room
+        // than the app's live panel; a taller showcase shell keeps the glance
+        // lines and gauges visible instead of clipping at the shell bottom.
+        state.expandedSize = CGSize(width: state.expandedSize.width,
+                                    height: state.expandedSize.height + 130)
 
         let size = CGSize(width: state.expandedSize.width + 120,
                           height: state.expandedSize.height + 48)
@@ -198,9 +203,13 @@ enum ShowcaseRenderer {
                                  riskFeed: riskFeed, posture: posture,
                                  usageHistory: usageHistory, integrity: integrity,
                                  worktrees: worktrees, openWorktrees: {},
-                                 openUsageHistory: {})
+                                 openUsageHistory: {}, renderStatic: true)
             .frame(width: state.expandedSize.width, height: state.expandedSize.height)
-            .frame(width: size.width, height: size.height, alignment: .top)
+            // ImageRenderer otherwise lets the shell negotiate up to the
+            // proposed canvas; fixedSize pins it to the frame above so the
+            // gradient margins survive and nothing clips.
+            .fixedSize()
+            .frame(width: size.width, height: size.height)
             .background(
                 LinearGradient(colors: [Color(red: 0.12, green: 0.13, blue: 0.22),
                                         Color(red: 0.05, green: 0.05, blue: 0.09)],
@@ -260,7 +269,7 @@ enum ShowcaseRenderer {
         model.injectSnapshot(demoUsageSnapshot())
 
         let size = CGSize(width: 760, height: 780)
-        let view = UsageHistoryView(model: model)
+        let view = UsageHistoryView(model: model, renderStatic: true)
             .frame(width: size.width, height: size.height)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, .dark)
@@ -277,43 +286,28 @@ enum ShowcaseRenderer {
     /// NSHostingView + cacheDisplay instead of ImageRenderer: ImageRenderer
     /// skips ScrollView contents entirely (session list, JSON input, the whole
     /// usage body), a real AppKit render pass does not.
+    /// ImageRenderer rasterizes SwiftUI content as vectors at any scale —
+    /// text stays crisp at 3x, unlike NSView capture paths whose layer trees
+    /// rasterize at the window backing scale (or 1x with no window at all;
+    /// both shipped blurry glyphs). The one ImageRenderer caveat — ScrollView
+    /// contents are skipped — is handled by the views' `renderStatic` mode,
+    /// which swaps every ScrollView for a plain stack during showcase renders.
     private static func writePNG(_ view: some View, size: CGSize, to url: URL) throws {
-        _ = NSApplication.shared // AppKit must be bootstrapped for offscreen views
+        _ = NSApplication.shared // AppKit must be bootstrapped for offscreen rendering
 
-        let hosting = NSHostingView(rootView: AnyView(view))
-        hosting.appearance = NSAppearance(named: .darkAqua)
-        hosting.frame = NSRect(origin: .zero, size: size)
-        // A windowless layer-backed view rasterizes its layers at
-        // contentsScale 1 — cacheDisplay then upscales those bitmaps, and
-        // every text glyph ships blurry. Housing the view in a never-shown
-        // borderless window gives the layer tree the screen's backing scale
-        // (2x on Retina), so the capture below copies crisp pixels.
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = hosting
-        hosting.layoutSubtreeIfNeeded()
-
-        // Let SwiftUI settle async layout (Charts, lazy stacks) with a few
-        // runloop turns before drawing.
-        for _ in 0..<8 {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-            hosting.layoutSubtreeIfNeeded()
+        let scale = CGFloat(Int(ProcessInfo.processInfo.environment["PERCH_SHOWCASE_SCALE"] ?? "") ?? 3)
+        let renderer = ImageRenderer(content: AnyView(view))
+        renderer.proposedSize = ProposedViewSize(size)
+        renderer.scale = scale
+        guard let cg = renderer.cgImage else {
+            throw RenderError(description: "ImageRenderer produced no image for \(url.lastPathComponent)")
         }
-
-        let scale = Int(ProcessInfo.processInfo.environment["PERCH_SHOWCASE_SCALE"] ?? "") ?? 2
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(size.width) * scale, pixelsHigh: Int(size.height) * scale,
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
-            throw RenderError(description: "could not allocate bitmap for \(url.lastPathComponent)")
-        }
+        let rep = NSBitmapImageRep(cgImage: cg)
         rep.size = size
-        hosting.cacheDisplay(in: hosting.bounds, to: rep)
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw RenderError(description: "PNG encode failed for \(url.lastPathComponent)")
         }
         try png.write(to: url)
-        print("wrote \(url.path) (\(png.count / 1024) KB)")
+        print("wrote \(url.path) (\(png.count / 1024) KB, \(cg.width)x\(cg.height))")
     }
 }

@@ -18,6 +18,9 @@ struct NotchRootView: View {
     @ObservedObject var worktrees: WorktreeModel
     let openWorktrees: () -> Void
     let openUsageHistory: () -> Void
+    /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
+    /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
+    var renderStatic = false
 
     var body: some View {
         shell
@@ -102,7 +105,7 @@ struct NotchRootView: View {
         VStack(alignment: .leading, spacing: 10) {
             PostureBadgeView(posture: posture)
             if !riskFeed.isEmpty {
-                RiskCardView(feed: riskFeed)
+                RiskCardView(feed: riskFeed, renderStatic: renderStatic)
             }
             pageSwitcher
             Group {
@@ -180,6 +183,13 @@ struct NotchRootView: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
+        } else if renderStatic {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(sessions.sessions) { session in
+                    SessionRowView(session: session)
+                }
+                Spacer(minLength: 0)
+            }
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 6) {

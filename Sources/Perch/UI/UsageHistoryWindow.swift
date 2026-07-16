@@ -36,29 +36,40 @@ final class UsageHistoryWindowController {
 
 struct UsageHistoryView: View {
     @ObservedObject var model: UsageHistoryModel
+    /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
+    /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
+    var renderStatic = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    summaryCards
-                    chart
-                    dailyTable
-                    HStack(alignment: .top, spacing: 16) {
-                        breakdown(title: "By model", rows: model.snapshot.models.prefix(10).map {
-                            ($0.id, $0.agent == .claude ? "✳" : "⌘", $0.model, $0.bucket)
-                        })
-                        breakdown(title: "By project", rows: model.snapshot.projects.prefix(10).map {
-                            ($0.id, "▸", $0.project, $0.bucket)
-                        })
-                    }
-                    footer
+            if renderStatic {
+                scrollContent
+            } else {
+                ScrollView {
+                    scrollContent
                 }
             }
         }
         .padding(16)
         .frame(minWidth: 680, minHeight: 480)
+    }
+
+    private var scrollContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            summaryCards
+            chart
+            dailyTable
+            HStack(alignment: .top, spacing: 16) {
+                breakdown(title: "By model", rows: model.snapshot.models.prefix(10).map {
+                    ($0.id, $0.agent == .claude ? "✳" : "⌘", $0.model, $0.bucket)
+                })
+                breakdown(title: "By project", rows: model.snapshot.projects.prefix(10).map {
+                    ($0.id, "▸", $0.project, $0.bucket)
+                })
+            }
+            footer
+        }
     }
 
     private static let dayFormatter: DateFormatter = {

@@ -4,25 +4,36 @@ import SwiftUI
 /// surface, grouped by category. Read-only — it reports, it doesn't judge.
 struct IntegrityView: View {
     @ObservedObject var model: IntegrityModel
+    /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
+    /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
+    var renderStatic = false
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(IntegrityCategory.allCases, id: \.self) { category in
-                    let items = model.snapshot.items(in: category)
-                    if !items.isEmpty {
-                        section(category, items)
-                    }
-                }
-                if model.snapshot.items.isEmpty {
-                    Text(model.scanning ? "Scanning…" : "No persistence surface found")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 12)
-                }
-                legend
+        if renderStatic {
+            content
+        } else {
+            ScrollView(.vertical, showsIndicators: false) {
+                content
             }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(IntegrityCategory.allCases, id: \.self) { category in
+                let items = model.snapshot.items(in: category)
+                if !items.isEmpty {
+                    section(category, items)
+                }
+            }
+            if model.snapshot.items.isEmpty {
+                Text(model.scanning ? "Scanning…" : "No persistence surface found")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 12)
+            }
+            legend
         }
     }
 
