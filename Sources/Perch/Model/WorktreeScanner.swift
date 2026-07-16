@@ -64,8 +64,67 @@ enum WorktreeScanner {
 
     /// Physical path with symlinks resolved; falls back to the input if the
     /// path does not exist (a not-yet/never-existing cwd stays comparable).
-    private static func resolvePath(_ path: String) -> String {
+    /// Non-private: WorktreeModel re-resolves live cwds at copy time.
+    static func resolvePath(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    /// Cwds of Codex sessions whose rollout file was written recently —
+    /// the headless `--worktree-report` has no SessionStore, and Codex has no
+    /// pid registry, so rollout recency is the only liveness signal. The app's
+    /// tailer treats <90s as fresh (plus in-flight turn state the CLI can't
+    /// see); the CLI compensates with a wide 30-minute window, erring toward
+    /// `active` — never toward offering a live worktree for removal.
+    static func codexLiveCwds(now: Date = Date(),
+                              window: TimeInterval = 30 * 60) -> Set<String> {
+        let root = PerchPaths.codexHomeDir.appendingPathComponent("sessions", isDirectory: true)
+        let fm = FileManager.default
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.dateFormat = "yyyy/MM/dd"
+        var cwds = Set<String>()
+        // Rollouts are sharded by day; the window can only span today and
+        // yesterday.
+        for offset in 0...1 {
+            guard let day = Calendar.current.date(byAdding: .day, value: -offset, to: now) else { continue }
+            let dir = root.appendingPathComponent(dayFormatter.string(from: day), isDirectory: true)
+            guard let files = try? fm.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]) else { continue }
+            for file in files where file.pathExtension == "jsonl" {
+                let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate ?? .distantPast
+                guard now.timeIntervalSince(mtime) < window else { continue }
+                if let cwd = firstCwd(in: file) { cwds.insert(cwd) }
+            }
+        }
+        return cwds
+    }
+
+    /// The `cwd` from the first parseable JSON line of a transcript/rollout.
+    /// Both Claude transcripts (top-level "cwd") and Codex rollouts
+    /// (session_meta payload.cwd) are covered.
+    static func firstCwd(in file: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        var buffer = Data()
+        while buffer.count < (1 << 20) {  // a cwd shows up in the first lines; cap the read
+            guard let chunk = try? handle.read(upToCount: 1 << 16), !chunk.isEmpty else { break }
+            buffer.append(chunk)
+            while let nl = buffer.firstIndex(of: 0x0A) {
+                let lineData = buffer[buffer.startIndex..<nl]
+                buffer.removeSubrange(buffer.startIndex...nl)
+                if let cwd = cwdFromLine(lineData) { return cwd }
+            }
+        }
+        return cwdFromLine(buffer)
+    }
+
+    private static func cwdFromLine(_ data: Data) -> String? {
+        guard let json = JSONValue(parsingLine: String(data: data, encoding: .utf8) ?? "") else { return nil }
+        if let cwd = json["cwd"]?.string, !cwd.isEmpty { return cwd }
+        if let cwd = json["payload"]?["cwd"]?.string, !cwd.isEmpty { return cwd }
+        return nil
     }
 
     /// For every `~/.claude/projects/<slug>/`, read the cwd from the newest
@@ -207,10 +266,26 @@ enum WorktreeScanner {
             ambiguous = true
         }
 
-        // Age from the directory mtime.
-        var ageDays = 0
+        // Age from the LATEST activity signal: the root dir mtime moves only
+        // when direct children change (nested edits don't bump it), so a
+        // resumed old worktree can look stale by mtime alone. The worktree's
+        // gitdir index mtime covers that gap — it updates on any real git
+        // action there, and Perch's own --no-optional-locks scans never touch
+        // it. Take the newer of the two; if neither is readable → ambiguous.
+        var activity: Date?
         if let mtime = (try? wtURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
-            ageDays = max(0, Int(now.timeIntervalSince(mtime) / 86_400))
+            activity = mtime
+        }
+        if let gitDir = git(["rev-parse", "--absolute-git-dir"], in: wtURL), gitDir.ok {
+            let index = URL(fileURLWithPath: gitDir.value.trimmingCharacters(in: .whitespacesAndNewlines))
+                .appendingPathComponent("index")
+            if let m = (try? index.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
+                activity = max(activity ?? .distantPast, m)
+            }
+        }
+        var ageDays = 0
+        if let activity {
+            ageDays = max(0, Int(now.timeIntervalSince(activity) / 86_400))
         } else {
             ambiguous = true
         }
@@ -375,50 +450,30 @@ private final class SlugCwdCache: @unchecked Sendable {
         }
         lock.unlock()
 
-        let cwd = firstCwd(in: file)
+        let cwd = WorktreeScanner.firstCwd(in: file)
         lock.lock()
         store[slug] = (mtime, cwd)
         lock.unlock()
         return cwd
     }
-
-    /// The `cwd` from the first parseable JSON line of a transcript.
-    private func firstCwd(in file: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
-        defer { try? handle.close() }
-        var buffer = Data()
-        while buffer.count < (1 << 20) {  // a cwd shows up in the first line; cap the read
-            guard let chunk = try? handle.read(upToCount: 1 << 16), !chunk.isEmpty else { break }
-            buffer.append(chunk)
-            while let nl = buffer.firstIndex(of: 0x0A) {
-                let lineData = buffer[buffer.startIndex..<nl]
-                buffer.removeSubrange(buffer.startIndex...nl)
-                if let json = JSONValue(parsingLine: String(data: lineData, encoding: .utf8) ?? ""),
-                   let cwd = json["cwd"]?.string, !cwd.isEmpty {
-                    return cwd
-                }
-            }
-        }
-        if let json = JSONValue(parsingLine: String(data: buffer, encoding: .utf8) ?? ""),
-           let cwd = json["cwd"]?.string, !cwd.isEmpty {
-            return cwd
-        }
-        return nil
-    }
 }
 
-/// Directory-size cache keyed by (path, mtime): a worktree whose top-level
-/// mtime is unchanged since the last walk reuses the prior byte totals.
+/// Directory-size cache keyed by (path, mtime), with a TTL: the top-level
+/// mtime misses growth INSIDE existing subdirectories (a .build that doubles
+/// never bumps the root), so entries also expire after 6 hours — stale byte
+/// totals self-correct within the day instead of surviving the app's lifetime.
 private final class SizeCache: @unchecked Sendable {
     static let shared = SizeCache()
     private let lock = NSLock()
-    private var store: [String: (mtime: Date, total: Int64, bulk: Int64)] = [:]
+    private let ttl: TimeInterval = 6 * 3600
+    private var store: [String: (mtime: Date, walkedAt: Date, total: Int64, bulk: Int64)] = [:]
 
     func size(of path: String) -> (total: Int64, bulk: Int64) {
         let mtime = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate ?? .distantPast
+        let now = Date()
         lock.lock()
-        if let hit = store[path], hit.mtime == mtime {
+        if let hit = store[path], hit.mtime == mtime, now.timeIntervalSince(hit.walkedAt) < ttl {
             lock.unlock()
             return (hit.total, hit.bulk)
         }
@@ -426,7 +481,7 @@ private final class SizeCache: @unchecked Sendable {
 
         let sized = WorktreeScanner.directorySize(path)
         lock.lock()
-        store[path] = (mtime, sized.total, sized.bulk)
+        store[path] = (mtime, now, sized.total, sized.bulk)
         lock.unlock()
         return sized
     }
@@ -460,6 +515,18 @@ final class WorktreeModel: ObservableObject {
     /// Showcase/selftest support: set a snapshot without scanning.
     func injectSnapshot(_ snap: WorktreeSnapshot) {
         snapshot = snap
+    }
+
+    /// Cleanup commands checked against liveness NOW, not at the last scan:
+    /// a session that started inside a reclaimable-marked worktree since then
+    /// must not have its removal handed to the clipboard.
+    func cleanupCommandsNow() -> String {
+        let live = Set(liveCwdsProvider().map(WorktreeScanner.resolvePath))
+        let nowLive = Set(snapshot.reclaimable.map(\.path).filter { path in
+            let resolved = WorktreeScanner.resolvePath(path)
+            return live.contains { $0 == resolved || $0.hasPrefix(resolved + "/") }
+        })
+        return snapshot.cleanupCommands(excludingPaths: nowLive)
     }
 
     func refresh() {

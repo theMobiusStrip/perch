@@ -41,10 +41,12 @@ if let command = cliArgs.first {
         print(UsageHistoryScanner.scan(daysBack: 30).reportText)
         exit(0)
     case "--worktree-report":
-        // Headless has no live SessionStore; read live cwds from the pid
-        // registry so the `active` tier still recognises running sessions.
+        // Headless has no live SessionStore; read live cwds from Claude's pid
+        // registry AND recent Codex rollouts (Codex has no registry) so the
+        // `active` tier still recognises running sessions of both agents.
         let cfg = PerchConfig.load()
         let live = Set(IntegrityScanner.liveSessionProjectDirs().map(\.path))
+            .union(WorktreeScanner.codexLiveCwds())
         let base = WorktreeScanner.scan(liveCwds: live, staleDays: cfg.worktreeStaleDays)
         print(WorktreeScanner.computeSizes(base).reportText)
         exit(0)

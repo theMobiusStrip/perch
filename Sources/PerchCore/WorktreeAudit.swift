@@ -250,10 +250,16 @@ public struct WorktreeSnapshot: Sendable, Equatable {
     /// the copied block may span several projects. Emits ONLY reclaimable
     /// worktrees; empty when there are none. Perch never runs these; the user
     /// does, in their own terminal.
-    public var cleanupCommands: String {
+    public var cleanupCommands: String { cleanupCommands(excludingPaths: []) }
+
+    /// Same, minus `excluded` worktree paths. The snapshot's tiers are as old
+    /// as the last scan, so the caller re-checks liveness at COPY time and
+    /// passes any reclaimable-marked worktree a session has entered since —
+    /// its removal must never reach the clipboard.
+    public func cleanupCommands(excludingPaths excluded: Set<String>) -> String {
         var lines: [String] = []
         for repo in repos {
-            for wt in repo.worktrees where tier(wt) == .reclaimable {
+            for wt in repo.worktrees where tier(wt) == .reclaimable && !excluded.contains(wt.path) {
                 lines.append("git -C \(shellQuote(repo.repoPath)) worktree remove \(shellQuote(wt.path))")
             }
         }

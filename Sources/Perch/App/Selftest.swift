@@ -1543,6 +1543,12 @@ private func worktreeCleanupCommands(_ t: Checker) {
 
     // Empty snapshot → empty string (nothing to copy).
     t.expectEqual(WorktreeSnapshot().cleanupCommands, "", "emptySnapshotEmpty")
+
+    // Copy-time liveness guard: excluding a reclaimable path drops its line
+    // (a session entered it after the scan), and an empty exclusion set is
+    // identical to the plain property.
+    t.expectEqual(snap.cleanupCommands(excludingPaths: [reclaimablePath]), "", "excludedPathDropped")
+    t.expectEqual(snap.cleanupCommands(excludingPaths: []), snap.cleanupCommands, "emptyExclusionIdentical")
 }
 
 @MainActor

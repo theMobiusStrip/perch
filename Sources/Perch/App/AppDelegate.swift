@@ -110,8 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return paths.map { URL(fileURLWithPath: $0) }
         }
         // Same live-cwd source keeps a running agent's worktree in `active`.
+        // Filter on isLive: ended Codex sessions stay in the store with
+        // isLive=false (no pid registry to GC them), and counting their cwds
+        // would pin finished worktrees `active` until Perch restarts.
         worktreeModel.liveCwdsProvider = { [weak self] in
-            Set(self?.sessionStore.sessions.compactMap { $0.cwd } ?? [])
+            Set(self?.sessionStore.sessions.filter(\.isLive).compactMap { $0.cwd } ?? [])
         }
         let notchController = NotchController(sessions: sessionStore, usage: usageStore,
                                               riskFeed: riskFeed, posture: securityPosture,

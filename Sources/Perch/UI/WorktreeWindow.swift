@@ -203,7 +203,9 @@ struct WorktreeView: View {
     }
 
     private func copyCommands() {
-        let commands = snapshot.cleanupCommands
+        // Re-checked against CURRENT live sessions — the snapshot's tiers can
+        // be up to a scan-interval old.
+        let commands = model.cleanupCommandsNow()
         guard !commands.isEmpty else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
