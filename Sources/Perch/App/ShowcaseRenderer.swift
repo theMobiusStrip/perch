@@ -195,7 +195,7 @@ enum ShowcaseRenderer {
         // than the app's live panel; a taller showcase shell keeps the glance
         // lines and gauges visible instead of clipping at the shell bottom.
         state.expandedSize = CGSize(width: state.expandedSize.width,
-                                    height: state.expandedSize.height + 130)
+                                    height: state.expandedSize.height + 155)
 
         let size = CGSize(width: state.expandedSize.width + 120,
                           height: state.expandedSize.height + 48)

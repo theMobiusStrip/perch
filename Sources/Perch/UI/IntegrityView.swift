@@ -19,7 +19,7 @@ struct IntegrityView: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(IntegrityCategory.allCases, id: \.self) { category in
                 let items = model.snapshot.items(in: category)
                 if !items.isEmpty {
@@ -41,16 +41,23 @@ struct IntegrityView: View {
     /// carries a hook it doesn't recognise. Say so, so a neutral dot is never
     /// read as an all-clear.
     private var legend: some View {
-        Text("● changed recently  ● non-Perch hook — review. Perch flags changes, not safety; an unchanged file can still be poisoned.")
-            .font(.system(size: 8))
-            .foregroundStyle(.tertiary)
-            .padding(.top, 4)
+        HStack(spacing: 4) {
+            Circle().fill(PerchTheme.attention).frame(width: 5, height: 5)
+            Text("changed recently")
+            Circle().fill(PerchTheme.attention).frame(width: 5, height: 5)
+                .padding(.leading, 6)
+            Text("non-Perch hook — review. Perch flags changes, not safety; an unchanged file can still be poisoned.")
+        }
+        .font(.system(size: 8))
+        .foregroundStyle(.tertiary)
+        .padding(.top, 2)
     }
 
     private func section(_ category: IntegrityCategory, _ items: [IntegrityItem]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             Text(category.rawValue.uppercased())
                 .font(.system(size: 9, weight: .bold))
+                .tracking(0.6)
                 .foregroundStyle(.tertiary)
             ForEach(items) { item in
                 row(item)
@@ -72,8 +79,12 @@ struct IntegrityView: View {
                         .lineLimit(1)
                     if let tag = tag(for: item.status) {
                         Text(tag)
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 7.5, weight: .bold))
+                            .tracking(0.3)
                             .foregroundStyle(color(for: item.status))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill(color(for: item.status).opacity(0.15)))
                     }
                     Spacer(minLength: 4)
                     if item.status == .nonPerch || item.status == .changedRecently,
@@ -83,9 +94,16 @@ struct IntegrityView: View {
                         Button {
                             model.acknowledge(item)
                         } label: {
-                            Text("✓ reviewed")
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 3) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text("reviewed")
+                                    .font(.system(size: 8, weight: .medium))
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         .help("Hide this flag until the item changes again")
@@ -93,7 +111,8 @@ struct IntegrityView: View {
                     if let m = item.lastModified {
                         Text(Self.age(m))
                             .font(.caption2)
-                            .foregroundStyle(item.status == .changedRecently ? Color.orange : Color.secondary.opacity(0.7))
+                            .foregroundStyle(item.status == .changedRecently
+                                             ? PerchTheme.attention : Color.secondary.opacity(0.7))
                             .monospacedDigit()
                     }
                 }
@@ -103,10 +122,9 @@ struct IntegrityView: View {
                     .lineLimit(1)
             }
         }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .fill(Color.white.opacity(0.04)))
+        .padding(.vertical, 5)
+        .padding(.horizontal, 9)
+        .perchCard(cornerRadius: 9)
     }
 
     /// Perch has no way to tell a user's own hook from an injected one, so a
@@ -114,8 +132,8 @@ struct IntegrityView: View {
     /// here is green: unchanged is a neutral state, not a safety guarantee.
     private func color(for status: IntegrityStatus) -> Color {
         switch status {
-        case .nonPerch, .changedRecently: return .orange
-        case .unreadable: return .yellow
+        case .nonPerch, .changedRecently: return PerchTheme.attention
+        case .unreadable: return PerchTheme.caution
         case .unchanged: return Color(white: 0.55)
         case .absent: return Color.gray.opacity(0.4)
         }

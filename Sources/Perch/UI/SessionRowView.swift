@@ -16,21 +16,20 @@ struct SessionRowView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.vertical, 7)
-        .padding(.leading, 10)
-        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(session.needsAttention
+                      ? PerchTheme.attention.opacity(0.09)
+                      : PerchTheme.cardFill)
         )
-        .overlay(alignment: .leading) {
-            if session.needsAttention {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.orange)
-                    .frame(width: 3)
-                    .padding(.vertical, 4)
-            }
-        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(session.needsAttention
+                              ? PerchTheme.attention.opacity(0.45)
+                              : PerchTheme.cardBorder, lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
@@ -42,11 +41,8 @@ struct SessionRowView: View {
     // MARK: - Header
 
     private var headerRow: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: session.key.agent == .claude ? "sparkle" : "command")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(session.key.agent == .claude ? Color.orange : Color.cyan)
-                .frame(width: 16, height: 16)
+        HStack(alignment: .top, spacing: 9) {
+            AgentIconChip(agent: session.key.agent)
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -65,59 +61,62 @@ struct SessionRowView: View {
                         Image(systemName: session.lastRisk == .danger
                               ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(session.lastRisk == .danger ? Color.red : Color.yellow)
+                            .foregroundStyle(session.lastRisk == .danger
+                                             ? PerchTheme.danger : PerchTheme.caution)
                             .help(session.lastRisk == .danger
                                   ? "A dangerous tool call was flagged"
                                   : "A tool call was flagged for review")
                     }
                     Spacer(minLength: 4)
-                    stateBadge
+                    StatePill(text: stateText, color: stateColor)
                 }
 
-                HStack(spacing: 8) {
-                    elapsedText
-                    if session.totalTokens > 0 {
-                        Text(Self.compactTokens(session.totalTokens))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let pct = session.contextUsedPct {
-                        ContextMicroBar(pct: pct)
-                    }
-                    if session.subagentCount > 0 {
-                        Text("\(session.subagentCount) sub")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
-                }
+                metadataLine
 
                 snippetLine
             }
         }
     }
 
-    private var stateBadge: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(stateColor)
-                .frame(width: 6, height: 6)
-            Text(stateText)
-                .font(.caption2)
-                .foregroundStyle(session.needsAttention ? Color.orange : Color.secondary)
+    private var metadataLine: some View {
+        HStack(spacing: 5) {
+            elapsedText
+            if session.totalTokens > 0 {
+                separator
+                Text(Self.compactTokens(session.totalTokens))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if let pct = session.contextUsedPct {
+                separator
+                ContextMicroBar(pct: pct)
+            }
+            if session.subagentCount > 0 {
+                separator
+                Text("\(session.subagentCount) sub")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(expanded ? 180 : 0))
         }
+    }
+
+    private var separator: some View {
+        Text("·")
+            .font(.caption2)
+            .foregroundStyle(.quaternary)
     }
 
     @ViewBuilder
     private var snippetLine: some View {
         if session.needsAttention, let note = session.attentionNote, !note.isEmpty {
             Text(note)
-                .font(.caption)
-                .foregroundStyle(Color.orange)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(PerchTheme.attention)
                 .lineLimit(1)
         } else if let snippet = session.lastAssistantSnippet, !snippet.isEmpty {
             Text(snippet.replacingOccurrences(of: "\n", with: " "))
@@ -150,20 +149,15 @@ struct SessionRowView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.leading, 24)
+        .padding(.leading, 33)
+        .padding(.top, 2)
         .padding(.bottom, 2)
     }
 
     // MARK: - State presentation
 
     private var stateColor: Color {
-        switch session.state {
-        case .executing: return .green
-        case .waitingPermission, .waitingInput: return .orange
-        case .idle: return .gray
-        case .ended: return Color.gray.opacity(0.5)
-        case .unknown: return Color.gray.opacity(0.5)
-        }
+        PerchTheme.stateColor(session.state)
     }
 
     private var stateText: String {
@@ -212,28 +206,26 @@ struct SessionRowView: View {
 private struct ContextMicroBar: View {
     let pct: Double
 
+    private var clamped: Double { min(max(pct, 0), 100) }
+    private var color: Color { PerchTheme.gaugeColor(pct: clamped) }
+
     var body: some View {
         HStack(spacing: 4) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.12))
+                    Capsule().fill(PerchTheme.trackFill)
                     Capsule()
-                        .fill(color)
-                        .frame(width: max(2, geo.size.width * CGFloat(min(max(pct, 0), 100) / 100)))
+                        .fill(LinearGradient(colors: [color.opacity(0.75), color],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(2, geo.size.width * CGFloat(clamped / 100)))
                 }
             }
-            .frame(width: 34, height: 4)
-            Text("\(Int(min(max(pct, 0), 100)))%")
+            .frame(width: 38, height: 4.5)
+            Text("\(Int(clamped))%")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
         }
-    }
-
-    private var color: Color {
-        if pct > 85 { return .red }
-        if pct > 60 { return .orange }
-        return .green
     }
 }
 
@@ -269,8 +261,8 @@ private struct TimelineEventRow: View {
     }
 
     private var iconColor: Color {
-        if event.isError { return .red }
-        if event.endedAt == nil { return .green }
+        if event.isError { return PerchTheme.danger }
+        if event.endedAt == nil { return PerchTheme.running }
         return Color.secondary
     }
 

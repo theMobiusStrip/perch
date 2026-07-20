@@ -40,21 +40,8 @@ private struct StateDot: View {
 
     var body: some View {
         Circle()
-            .fill(color)
+            .fill(PerchTheme.stateColor(state))
             .frame(width: 5, height: 5)
-    }
-
-    private var color: Color {
-        switch state {
-        case .executing:
-            return .green
-        case .waitingPermission, .waitingInput:
-            return .orange
-        case .idle:
-            return Color(white: 0.6)
-        case .ended, .unknown:
-            return Color(white: 0.35)
-        }
     }
 }
 
@@ -64,7 +51,7 @@ private struct AttentionDot: View {
 
     var body: some View {
         Circle()
-            .fill(Color.orange)
+            .fill(PerchTheme.attention)
             .frame(width: 6, height: 6)
             .scaleEffect(pulsing ? 1.25 : 0.8)
             .opacity(pulsing ? 1.0 : 0.55)

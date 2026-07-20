@@ -108,7 +108,11 @@ struct WorktreeView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
     // MARK: - Grouped list
@@ -238,22 +242,8 @@ struct WorktreeGlanceRow: View {
     var body: some View {
         if model.snapshot.reclaimableBytes > 0 {
             Button(action: onOpen) {
-                HStack(spacing: 6) {
-                    Image(systemName: "tree")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    Text("Worktrees")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    Text(summaryText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 2)
-                .contentShape(Rectangle())
+                NotchGlanceRow(icon: "tree", tint: PerchTheme.running,
+                               label: "Worktrees", summary: summaryText)
             }
             .buttonStyle(.plain)
         }
