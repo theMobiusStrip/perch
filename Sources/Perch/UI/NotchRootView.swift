@@ -117,25 +117,38 @@ struct NotchRootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if state.page == .sessions {
-                WorktreeGlanceRow(model: worktrees, onOpen: openWorktrees)
-                UsageOverviewRow(history: usageHistory, onOpen: openUsageHistory)
-                UsageGaugeStrip(usage: usage, claudeDataMissing: claudeGaugesMissing)
+                footerSection
             }
         }
         .padding(.top, notchCutoutInset + 10)
         .padding(.horizontal, 14)
-        .padding(.bottom, 14)
+        .padding(.bottom, 13)
         .frame(width: shellSize.width, height: shellSize.height, alignment: .top)
+    }
+
+    /// Footer: glance rows (worktrees, tokens) over the rate-limit gauges,
+    /// separated from the session list by a hairline.
+    private var footerSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+                .padding(.bottom, 2)
+            WorktreeGlanceRow(model: worktrees, onOpen: openWorktrees)
+            UsageOverviewRow(history: usageHistory, onOpen: openUsageHistory)
+            UsageGaugeStrip(usage: usage, claudeDataMissing: claudeGaugesMissing)
+        }
     }
 
     // MARK: - Page switcher (Sessions | Integrity)
 
     private var pageSwitcher: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             pageTab("Sessions", .sessions, badge: 0)
             pageTab("Integrity", .integrity, badge: integrity.snapshot.flaggedCount)
-            Spacer(minLength: 0)
         }
+        .padding(2)
+        .background(Capsule().fill(Color.white.opacity(0.07)))
     }
 
     private func pageTab(_ title: String, _ page: NotchPage, badge: Int) -> some View {
@@ -145,18 +158,23 @@ struct NotchRootView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.caption2.weight(selected ? .bold : .regular))
+                    .font(.caption2.weight(selected ? .semibold : .regular))
                 if badge > 0 {
                     Text("\(badge)")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.orange))
+                        .background(Capsule().fill(PerchTheme.attention))
                 }
             }
             .foregroundStyle(selected ? Color.primary : Color.secondary)
-            .padding(.horizontal, 9).padding(.vertical, 3)
-            .background(Capsule().fill(selected ? Color.white.opacity(0.14) : Color.clear))
+            .padding(.horizontal, 10).padding(.vertical, 3.5)
+            .background(
+                Capsule()
+                    .fill(selected ? Color.white.opacity(0.16) : Color.clear)
+                    .shadow(color: .black.opacity(selected ? 0.25 : 0), radius: 2, x: 0, y: 1)
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -172,8 +190,11 @@ struct NotchRootView: View {
     @ViewBuilder
     private var sessionList: some View {
         if sessions.sessions.isEmpty {
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 Spacer(minLength: 0)
+                Image(systemName: "terminal")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(.quaternary)
                 Text("No agent sessions")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)

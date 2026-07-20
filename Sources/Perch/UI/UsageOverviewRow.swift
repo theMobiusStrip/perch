@@ -11,22 +11,8 @@ struct UsageOverviewRow: View {
     var body: some View {
         if history.snapshot.grandTotal > 0 {
             Button(action: onOpen) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                    Text("Tokens")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    Text(summaryText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 2)
-                .contentShape(Rectangle())
+                NotchGlanceRow(icon: "chart.bar.fill", tint: .teal,
+                               label: "Tokens", summary: summaryText)
             }
             .buttonStyle(.plain)
         }

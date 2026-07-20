@@ -19,17 +19,20 @@ struct UsageGaugeStrip: View {
 
     var body: some View {
         let items = collectItems()
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             if claudeDataMissing {
-                HStack(spacing: 5) {
+                HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 9))
+                        .font(.system(size: 9, weight: .medium))
                     Text("No Claude 5h/7d bars: the Claude app shows your quota in its own window but doesn't share it with Perch — only Terminal `claude` sessions do. Your token totals above still count every session.")
                         .font(.system(size: 9))
                         .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .perchInset()
             }
             gaugeRows(items)
         }
@@ -40,12 +43,11 @@ struct UsageGaugeStrip: View {
         if !items.isEmpty {
             // Periodic timeline keeps the "resets 2h 14m" countdowns fresh.
             TimelineView(.periodic(from: .now, by: 30)) { context in
-                VStack(spacing: 5) {
+                VStack(spacing: 6) {
                     ForEach(items) { item in
                         GaugeRowView(label: item.label, window: item.window, now: context.date)
                     }
                 }
-                .padding(.vertical, 2)
             }
         }
     }
@@ -67,12 +69,7 @@ private struct GaugeRowView: View {
     let now: Date
 
     private var pct: Double { min(max(window.usedPercentage, 0), 100) }
-
-    private var barColor: Color {
-        if pct > 85 { return .red }
-        if pct > 60 { return .orange }
-        return .green
-    }
+    private var barColor: Color { PerchTheme.gaugeColor(pct: pct) }
 
     private var countdownText: String {
         guard let resetsAt = window.resetsAt else { return "" }
@@ -87,31 +84,32 @@ private struct GaugeRowView: View {
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(width: 64, alignment: .leading)
+                .frame(width: 58, alignment: .leading)
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(0.12))
+                        .fill(PerchTheme.trackFill)
                     Capsule()
-                        .fill(barColor)
-                        .frame(width: max(4, geo.size.width * pct / 100))
+                        .fill(LinearGradient(colors: [barColor.opacity(0.7), barColor],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(5, geo.size.width * pct / 100))
                 }
             }
-            .frame(height: 5)
+            .frame(height: 6)
 
             Text("\(Int(pct.rounded()))%")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(pct > 85 ? Color.red : Color.primary)
-                .frame(width: 36, alignment: .trailing)
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(pct > 85 ? PerchTheme.danger : Color.primary)
+                .frame(width: 34, alignment: .trailing)
 
             Text(countdownText)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
-                .frame(width: 88, alignment: .trailing)
+                .frame(width: 84, alignment: .trailing)
         }
-        .frame(height: 14)
+        .frame(height: 15)
         .help("\(label): \(Int(pct.rounded()))% used\(countdownText.isEmpty ? "" : " · \(countdownText)")")
     }
 

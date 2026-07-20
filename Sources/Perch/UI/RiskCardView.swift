@@ -26,25 +26,26 @@ struct RiskCardView: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(accentColor(for: entry.risk).opacity(0.12))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accentColor(for: entry.risk).opacity(0.10))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(accentColor(for: entry.risk).opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(accentColor(for: entry.risk).opacity(0.35), lineWidth: 1)
         )
     }
 
     private func accentColor(for risk: RiskAssessment) -> Color {
-        risk.level == .danger ? .red : .orange
+        risk.level == .danger ? PerchTheme.danger : PerchTheme.attention
     }
 
     private func riskBanner(for risk: RiskAssessment) -> some View {
-        let color: Color = risk.level == .danger ? .red : .yellow
+        let color: Color = risk.level == .danger ? PerchTheme.danger : PerchTheme.caution
         return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 Image(systemName: risk.level == .danger
                       ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(color)
                 Text(risk.level == .danger ? "Flagged dangerous" : "Flagged for review")
                     .font(.caption.weight(.bold))
@@ -58,17 +59,17 @@ struct RiskCardView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(7)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(color.opacity(0.14)))
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(color.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .strokeBorder(color.opacity(0.22), lineWidth: 1))
     }
 
     // MARK: - Pieces
 
     private func header(for entry: RiskFeed.Entry) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: entry.key.agent == .claude ? "sparkle" : "command")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(entry.key.agent == .claude ? Color.orange : Color.cyan)
+        HStack(alignment: .center, spacing: 7) {
+            AgentIconChip(agent: entry.key.agent, size: 20)
             Text(projectName(for: entry))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -82,10 +83,16 @@ struct RiskCardView: View {
                 .lineLimit(1)
             Spacer(minLength: 8)
             if feed.count > 1 {
-                Text("\(focusedPosition) of \(feed.count)  ←/→")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                HStack(spacing: 4) {
+                    Text("\(focusedPosition) of \(feed.count)")
+                        .monospacedDigit()
+                    Text("←/→")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
             }
         }
     }
@@ -102,10 +109,7 @@ struct RiskCardView: View {
         }
         // A couple of lines always visible, up to ~8 before it scrolls.
         .frame(minHeight: 42, maxHeight: 110)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.black.opacity(0.35))
-        )
+        .perchInset(cornerRadius: 9)
     }
 
     private func inputText(for entry: RiskFeed.Entry) -> some View {
@@ -114,7 +118,7 @@ struct RiskCardView: View {
             .foregroundStyle(.secondary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(6)
+            .padding(7)
     }
 
     private func footer(for entry: RiskFeed.Entry) -> some View {
@@ -122,11 +126,25 @@ struct RiskCardView: View {
             Button {
                 feed.dismiss(id: entry.id)
             } label: {
-                Text("Dismiss Esc")
-                    .font(.caption)
+                HStack(spacing: 5) {
+                    Text("Dismiss")
+                        .font(.caption.weight(.medium))
+                    Text("esc")
+                        .font(.system(size: 8, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                        )
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.white.opacity(0.10)))
+                .contentShape(Capsule())
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
 
             Spacer(minLength: 4)
 
