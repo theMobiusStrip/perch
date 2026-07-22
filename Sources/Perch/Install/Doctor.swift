@@ -1,18 +1,28 @@
 import Foundation
 import PerchCore
 
+struct DoctorReport: Sendable {
+    let state: MonitoringCheckState
+    let checks: [MonitoringCheck]
+    let text: String
+}
+
 /// Aggregated integration health check: bridge deployed? socket live?
 /// Claude/Codex hook status, Codex version + trust reminder. Rendered as
 /// plain monospaced text in the menu-bar alert and by `Perch --doctor`.
 enum Doctor {
     static func report() -> String {
+        diagnose().text
+    }
+
+    static func diagnose() -> DoctorReport {
+        let runtime = socketCheck()
+        let snapshot = MonitoringInspector.inspect(runtime: runtime)
+        let checks = [snapshot.bridge, snapshot.socket, snapshot.claude, snapshot.codex]
         var lines: [String] = []
         lines.append("Perch Doctor — \(AppVersion.string) — \(timestamp())")
         lines.append("")
-        lines.append(render(bridgeCheck()))
-        lines.append(render(socketCheck()))
-        lines.append(ClaudeHookInstaller.status())
-        lines.append(CodexHookInstaller.status())
+        lines.append(contentsOf: checks.map(render))
         lines.append(CodexHookInstaller.versionSupportNote())
         lines.append("Detection: every tool call relayed by the hooks above is risk-scored offline; "
             + "danger-level calls (rm -rf, sudo, curl|sh, credential access, agent hook/settings writes) raise an OS notification "
@@ -25,7 +35,18 @@ enum Doctor {
         lines.append(CodexHookTrust.doctorLine()
             + " If Codex hooks are installed but tool calls never surface, missing trust is why.")
         lines.append("Log: \(PerchPaths.logFile.path)")
-        return lines.joined(separator: "\n")
+        return DoctorReport(state: aggregateState(for: checks), checks: checks,
+                            text: lines.joined(separator: "\n"))
+    }
+
+    /// Doctor is stricter than the compact monitoring badge: a mixed report
+    /// must not render a green success header while one of its visible checks
+    /// says that setup or repair is still required.
+    static func aggregateState(for checks: [MonitoringCheck]) -> MonitoringCheckState {
+        if checks.contains(where: { $0.state == .unavailable }) { return .unavailable }
+        if checks.contains(where: { $0.state == .checking }) { return .checking }
+        if checks.contains(where: { $0.state == .needsAttention }) { return .needsAttention }
+        return .ready
     }
 
     // MARK: - Checks
@@ -116,7 +137,13 @@ enum Doctor {
     }
 
     private static func render(_ check: MonitoringCheck) -> String {
-        let status = check.isReady ? "OK" : "NEEDS ATTENTION"
+        let status: String
+        switch check.state {
+        case .checking: status = "CHECKING"
+        case .ready: status = "OK"
+        case .needsAttention: status = "NEEDS ATTENTION"
+        case .unavailable: status = "UNAVAILABLE"
+        }
         let detail = check.detail.map { " — \($0)" } ?? ""
         return "\(check.title): \(status) — \(check.summary)\(detail)"
     }

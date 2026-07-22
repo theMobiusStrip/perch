@@ -200,6 +200,7 @@ enum ShowcaseRenderer {
             socket: ready("Runtime", "Local event server is listening"),
             claude: ready("Claude Code", "Hooks installed"),
             codex: ready("Codex", "Hooks installed and trusted")))
+        health.injectVerification(claude: now, codex: now)
         state.isExpanded = true
         state.hasAttention = true
         state.hasNotch = true

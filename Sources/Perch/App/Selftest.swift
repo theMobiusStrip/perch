@@ -31,6 +31,7 @@ enum Selftest {
         perchConfigCheckForUpdatesRoundTrip(t)
         perchConfigWorktreeStaleDaysRoundTrip(t)
         perchConfigNotificationPreferencesRoundTrip(t)
+        perchConfigMonitoringVerificationRoundTrip(t)
         semVerParsesAndCompares(t)
         updateCheckDecision(t)
 
@@ -48,6 +49,9 @@ enum Selftest {
         riskFeedDismissAndFocusClamp(t)
         riskFeedRetainsRecentDetections(t)
         monitoringSnapshotSeparatesCoverageFromPosture(t)
+        monitoringHealthSeparatesConfigurationFromVerification(t)
+        notificationCoalescerSuppressesOnlyOverlap(t)
+        doctorStructuredOutcomeReflectsVisibleChecks(t)
         sessionRiskBadgeAgesOut(t)
         handleEnvelopeRoutesUserPromptSubmit(t)
         handleEnvelopeRoutesStop(t)
@@ -727,10 +731,14 @@ private extension Selftest {
         feed.onAdd = { _ in added += 1 }
         let key = SessionKey(agent: .claude, id: "s-1")
         let dangerInput = JSONValue.object(["command": .string("sudo rm -rf /")])
-        feed.add(key: key, toolName: "Bash", toolInput: dangerInput, cwd: "/tmp/proj",
-                 risk: RiskAssessor.assess(agent: .claude, toolName: "Bash", input: dangerInput))
+        let entry = feed.addEntry(
+            key: key, toolName: "Bash", toolInput: dangerInput, cwd: "/tmp/proj",
+            risk: RiskAssessor.assess(agent: .claude, toolName: "Bash", input: dangerInput))
+        t.expectTrue(entry != nil, "entryReturnedForRouting")
         t.expectEqual(feed.count, 1, "dangerAdded")
         t.expectEqual(added, 1, "onAddFired")
+        t.expectEqual(feed.focused?.id, entry?.id, "returnedEntryMatchesFocused")
+        t.expectEqual(feed.recent.first?.id, entry?.id, "returnedEntryMatchesHistory")
         t.expectEqual(feed.focused?.risk.level, .danger, "focusedDanger")
         t.expectEqual(feed.focused?.cwd, "/tmp/proj", "cwdCarried")
 
@@ -880,7 +888,9 @@ private extension Selftest {
         var attentions: [String] = []
         store.onAttention = { _, reason in attentions.append(reason) }
         var risks: [String] = []
-        store.onRiskDetected = { _, toolName, risk in risks.append("\(risk.level.label):\(toolName)") }
+        store.onRiskDetected = { _, entry in
+            risks.append("\(entry.risk.level.label):\(entry.toolName)")
+        }
 
         let recorder = ReplyRecorder()
         // A benign read: replied immediately and empty, nothing in the feed.
@@ -924,8 +934,8 @@ private extension Selftest {
         let feed = RiskFeed()
         store.riskFeed = feed
         var risks: [String] = []
-        store.onRiskDetected = { session, toolName, risk in
-            risks.append("\(session.key.id)|\(toolName)|\(risk.level.label)")
+        store.onRiskDetected = { session, entry in
+            risks.append("\(session.key.id)|\(entry.toolName)|\(entry.risk.level.label)")
         }
         let recorder = ReplyRecorder()
         store.handleEnvelope(hookEnvelope(event: "PreToolUse", extra: [
@@ -962,7 +972,7 @@ private extension Selftest {
         store.riskFeed = feed
         store.securityPosture = posture
         var riskCallbacks = 0
-        store.onRiskDetected = { _, _, _ in riskCallbacks += 1 }
+        store.onRiskDetected = { _, _ in riskCallbacks += 1 }
 
         // One dangerous call fires BOTH PermissionRequest and PreToolUse;
         // score, feed, and notification must all count it exactly once.
@@ -1175,6 +1185,31 @@ private extension Selftest {
     }
 
     @MainActor
+    static func perchConfigMonitoringVerificationRoundTrip(_ t: Checker) {
+        t.suite("PerchConfig.monitoringVerificationRoundTrip")
+        let claudeAt = Date(timeIntervalSince1970: 1_900_000_000.25)
+        let codexAt = Date(timeIntervalSince1970: 1_900_000_100.5)
+        var config = PerchConfig()
+        config.lastClaudeHookEventAt = claudeAt
+        config.lastCodexHookEventAt = codexAt
+        config.extra["future"] = .string("kept")
+
+        guard let encoded = t.unwrap(try? JSONEncoder().encode(config), "encode"),
+              let decoded = t.unwrap(
+                try? JSONDecoder().decode(PerchConfig.self, from: encoded),
+                "decode") else { return }
+        t.expectEqual(decoded.lastClaudeHookEventAt, claudeAt, "claudeTimestamp")
+        t.expectEqual(decoded.lastCodexHookEventAt, codexAt, "codexTimestamp")
+        t.expectEqual(decoded.extra["future"], .string("kept"), "unknownPreserved")
+
+        guard let defaults = t.unwrap(
+            try? JSONDecoder().decode(PerchConfig.self, from: Data("{}".utf8)),
+            "decodeDefaults") else { return }
+        t.expectNil(defaults.lastClaudeHookEventAt, "claudeDefaultsUnverified")
+        t.expectNil(defaults.lastCodexHookEventAt, "codexDefaultsUnverified")
+    }
+
+    @MainActor
     static func riskFeedRetainsRecentDetections(_ t: Checker) {
         t.suite("RiskFeed.retainsRecentDetections")
         let feed = RiskFeed()
@@ -1219,6 +1254,84 @@ private extension Selftest {
             bridge: check("Bridge", .ready), socket: check("Runtime", .unavailable),
             claude: check("Claude Code", .ready), codex: check("Codex", .ready))
         t.expectEqual(runtimeDown.state, .unavailable, "runtimeFailureWins")
+    }
+
+    @MainActor
+    static func monitoringHealthSeparatesConfigurationFromVerification(_ t: Checker) {
+        t.suite("MonitoringHealth.deliveryVerification")
+        func check(_ title: String, _ state: MonitoringCheckState) -> MonitoringCheck {
+            MonitoringCheck(title: title, state: state, summary: title, detail: nil)
+        }
+        let configured = MonitoringSnapshot(
+            bridge: check("Bridge", .ready), socket: check("Runtime", .ready),
+            claude: check("Claude Code", .ready), codex: check("Codex", .ready))
+        let health = MonitoringHealth(config: PerchConfig())
+        health.injectSnapshot(configured)
+        t.expectEqual(health.presentation.state, .needsAttention,
+                      "configurationAloneNeedsVerification")
+        t.expectEqual(health.presentation.title, "Verification needed", "unverifiedTitle")
+
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        health.injectVerification(claude: now, codex: nil)
+        t.expectEqual(health.presentation.state, .needsAttention, "partialVerificationIsAmber")
+        t.expectTrue(health.presentation.summary.contains("Codex"), "missingAgentNamed")
+        t.expectEqual(health.verificationState(for: .claude), .ready, "claudeVerified")
+        t.expectEqual(health.verificationState(for: .codex), .needsAttention,
+                      "codexStillUnverified")
+
+        health.injectVerification(claude: now, codex: now.addingTimeInterval(1))
+        t.expectEqual(health.presentation.state, .ready, "bothVerified")
+        t.expectEqual(health.presentation.title, "Monitoring verified", "verifiedTitle")
+        t.expectEqual(health.lastEventAt, now.addingTimeInterval(1), "newestEventExposed")
+
+        let claudeOnly = MonitoringSnapshot(
+            bridge: check("Bridge", .ready), socket: check("Runtime", .ready),
+            claude: check("Claude Code", .ready), codex: check("Codex", .needsAttention))
+        health.injectSnapshot(claudeOnly)
+        health.injectVerification(claude: now, codex: nil)
+        t.expectEqual(health.presentation.state, .ready, "configuredAgentVerified")
+    }
+
+    @MainActor
+    static func notificationCoalescerSuppressesOnlyOverlap(_ t: Checker) {
+        t.suite("NotificationCoalescer.overlap")
+        let key = SessionKey(agent: .claude, id: "same")
+        let other = SessionKey(agent: .claude, id: "other")
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        var coalescer = NotificationCoalescer()
+
+        t.expectFalse(coalescer.shouldSuppressAttention(for: key, at: now),
+                      "attentionWithoutRiskFires")
+        coalescer.recordRisk(for: key, at: now)
+        t.expectTrue(coalescer.shouldSuppressAttention(
+            for: key, at: now.addingTimeInterval(NotificationCoalescer.overlapWindow)),
+            "sameSessionOverlapSuppressed")
+        t.expectFalse(coalescer.shouldSuppressAttention(
+            for: other, at: now.addingTimeInterval(1)), "otherSessionStillFires")
+        t.expectFalse(coalescer.shouldSuppressAttention(
+            for: key,
+            at: now.addingTimeInterval(NotificationCoalescer.overlapWindow + 0.01)),
+            "laterAttentionFires")
+    }
+
+    @MainActor
+    static func doctorStructuredOutcomeReflectsVisibleChecks(_ t: Checker) {
+        t.suite("Doctor.structuredOutcome")
+        func check(_ state: MonitoringCheckState) -> MonitoringCheck {
+            MonitoringCheck(title: state.rawValue, state: state,
+                            summary: state.rawValue, detail: nil)
+        }
+        t.expectEqual(Doctor.aggregateState(for: [check(.ready), check(.ready)]),
+                      .ready, "allReadyIsSuccess")
+        t.expectEqual(Doctor.aggregateState(for: [check(.ready), check(.needsAttention)]),
+                      .needsAttention, "visibleWarningPreventsGreenHeader")
+        t.expectEqual(Doctor.aggregateState(for: [check(.needsAttention), check(.unavailable)]),
+                      .unavailable, "failureWins")
+        t.expectEqual(SetupViewModel.outcome(for: .ready), .success, "readyMapsToSuccess")
+        t.expectEqual(SetupViewModel.outcome(for: .needsAttention), .attention,
+                      "warningMapsToAttention")
+        t.expectEqual(SetupViewModel.outcome(for: .unavailable), .failure,
+                      "unavailableMapsToFailure")
     }
 
     @MainActor

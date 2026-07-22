@@ -2,6 +2,33 @@ import Foundation
 import PerchCore
 import UserNotifications
 
+/// A danger notification and the permission-attention event for that same call
+/// arrive back-to-back. Keep the useful danger alert and suppress only the
+/// redundant attention banner; if danger alerts are disabled, no risk is
+/// recorded here and the attention notification still fires.
+struct NotificationCoalescer {
+    static let overlapWindow: TimeInterval = 5
+    private var recentRiskBySession: [SessionKey: Date] = [:]
+
+    mutating func recordRisk(for key: SessionKey, at date: Date = Date()) {
+        prune(now: date)
+        recentRiskBySession[key] = date
+    }
+
+    mutating func shouldSuppressAttention(for key: SessionKey,
+                                          at date: Date = Date()) -> Bool {
+        prune(now: date)
+        guard let riskAt = recentRiskBySession[key] else { return false }
+        return date.timeIntervalSince(riskAt) <= Self.overlapWindow
+    }
+
+    private mutating func prune(now: Date) {
+        recentRiskBySession = recentRiskBySession.filter {
+            now.timeIntervalSince($0.value) <= Self.overlapWindow
+        }
+    }
+}
+
 enum NotificationAuthorizationState: String, Sendable {
     case unavailable
     case notRequested
@@ -31,14 +58,37 @@ enum NotificationAuthorizationState: String, Sendable {
 /// call is therefore gated behind a bundle check; outside a bundle we fall
 /// back to PerchLog only.
 @MainActor
-final class Notifier {
+final class Notifier: NSObject, UNUserNotificationCenterDelegate {
+    private enum Route: String {
+        case detections
+        case sessions
+        case usage
+    }
+
+    private enum NotificationID {
+        static let riskCategory = "PERCH_RISK"
+        static let sessionCategory = "PERCH_SESSION"
+        static let usageCategory = "PERCH_USAGE"
+        static let openDetections = "PERCH_OPEN_DETECTIONS"
+        static let openSessions = "PERCH_OPEN_SESSIONS"
+        static let openUsage = "PERCH_OPEN_USAGE"
+        static let routeKey = "perchRoute"
+        static let agentKey = "perchAgent"
+        static let sessionKey = "perchSession"
+        static let detectionKey = "perchDetection"
+    }
+
     private let sessions: SessionStore
     private let preferences: NotificationPreferences
+    var onOpenDetections: ((UUID?) -> Void)?
+    var onOpenSessions: ((SessionKey?) -> Void)?
+    var onOpenUsage: (() -> Void)?
 
     /// Dedupe: fingerprint → last fired. Same fingerprint within
     /// `dedupeWindow` is skipped.
     private var recentlyFired: [String: Date] = [:]
     private let dedupeWindow: TimeInterval = 30
+    private var coalescer = NotificationCoalescer()
 
     /// Stuck detection: sessions already notified for the current
     /// waiting episode. Cleared when the session leaves a waiting state.
@@ -54,6 +104,7 @@ final class Notifier {
     init(sessions: SessionStore, preferences: NotificationPreferences) {
         self.sessions = sessions
         self.preferences = preferences
+        super.init()
         let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.sweepStuckSessions()
@@ -64,6 +115,8 @@ final class Notifier {
         if !notificationsAvailable {
             PerchLog.info("Not running from a .app bundle — notifications are log-only",
                           category: "notify")
+        } else {
+            configureNotificationCenter()
         }
     }
 
@@ -116,25 +169,40 @@ final class Notifier {
 
     func notifyAttention(session: Session, reason: String) {
         guard preferences.attention else { return }
+        guard !coalescer.shouldSuppressAttention(for: session.key) else {
+            PerchLog.info("Coalesced attention behind danger alert for \(session.key.id)",
+                          category: "notify")
+            return
+        }
         let fingerprint = "attention|\(session.key.agent.rawValue)|\(session.key.id)|\(reason)"
         guard shouldFire(fingerprint) else { return }
         post(title: "\(session.displayTitle) needs attention",
              body: reason,
-             threadId: session.key.id)
+             threadId: session.key.id,
+             route: .sessions,
+             sessionKey: session.key,
+             category: NotificationID.sessionCategory)
     }
 
     /// Danger-level detection: fires regardless of whether the agent will
     /// prompt (a whitelisted or auto-approved dangerous call is exactly the
     /// one you must hear about).
-    func notifyRisk(session: Session, toolName: String, risk: RiskAssessment) {
+    func notifyRisk(session: Session, entry: RiskFeed.Entry) {
         guard preferences.dangerousCalls else { return }
-        let codes = risk.findings.map(\.code).joined(separator: ",")
-        let fingerprint = "risk|\(session.key.agent.rawValue)|\(session.key.id)|\(toolName)|\(codes)"
+        // RiskFeed has already collapsed duplicate hook callbacks into one
+        // retained entry. Key this final guard by that entry so two distinct
+        // dangerous calls with the same tool/findings are never conflated.
+        let fingerprint = "risk|\(entry.id.uuidString)"
         guard shouldFire(fingerprint) else { return }
-        let detail = risk.findings.map(\.message).joined(separator: "; ")
-        post(title: "\(session.displayTitle): dangerous \(toolName) call",
+        coalescer.recordRisk(for: session.key)
+        let detail = entry.risk.findings.map(\.message).joined(separator: "; ")
+        post(title: "\(session.displayTitle): dangerous \(entry.toolName) call",
              body: detail.isEmpty ? "Flagged by Perch's risk detector." : detail,
-             threadId: session.key.id)
+             threadId: session.key.id,
+             route: .detections,
+             sessionKey: session.key,
+             detectionID: entry.id,
+             category: NotificationID.riskCategory)
     }
 
     func notifyTaskComplete(session: Session, message: String?) {
@@ -149,7 +217,11 @@ final class Notifier {
         }
         post(title: "\(session.displayTitle) finished",
              body: body,
-             threadId: session.key.id)
+             threadId: session.key.id,
+             route: .sessions,
+             sessionKey: session.key,
+             detectionID: nil,
+             category: NotificationID.sessionCategory)
     }
 
     func notifyUsageThreshold(label: String, pct: Double) {
@@ -158,7 +230,11 @@ final class Notifier {
         guard shouldFire(fingerprint) else { return }
         post(title: "\(label) usage at \(Int(pct.rounded()))%",
              body: "The \(label) rate-limit window is \(Int(pct.rounded()))% used.",
-             threadId: "usage")
+             threadId: "usage",
+             route: .usage,
+             sessionKey: nil,
+             detectionID: nil,
+             category: NotificationID.usageCategory)
     }
 
     // MARK: - Stuck-session sweep (60s timer)
@@ -193,7 +269,9 @@ final class Notifier {
         return true
     }
 
-    private func post(title: String, body: String, threadId: String) {
+    private func post(title: String, body: String, threadId: String,
+                      route: Route, sessionKey: SessionKey?, detectionID: UUID? = nil,
+                      category: String) {
         guard notificationsAvailable else {
             PerchLog.info("NOTIFY (log-only): \(title) — \(body)", category: "notify")
             return
@@ -203,6 +281,16 @@ final class Notifier {
         content.body = body
         content.sound = preferences.sounds ? .default : nil
         content.threadIdentifier = threadId
+        content.categoryIdentifier = category
+        var userInfo: [String: String] = [NotificationID.routeKey: route.rawValue]
+        if let sessionKey {
+            userInfo[NotificationID.agentKey] = sessionKey.agent.rawValue
+            userInfo[NotificationID.sessionKey] = sessionKey.id
+        }
+        if let detectionID {
+            userInfo[NotificationID.detectionKey] = detectionID.uuidString
+        }
+        content.userInfo = userInfo
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content,
                                             trigger: nil)
@@ -210,6 +298,67 @@ final class Notifier {
             if let error {
                 PerchLog.warn("Notification delivery failed: \(error.localizedDescription)",
                               category: "notify")
+            }
+        }
+    }
+
+    private func configureNotificationCenter() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        let risk = UNNotificationCategory(
+            identifier: NotificationID.riskCategory,
+            actions: [UNNotificationAction(identifier: NotificationID.openDetections,
+                                           title: "Open Detection", options: [.foreground])],
+            intentIdentifiers: [])
+        let session = UNNotificationCategory(
+            identifier: NotificationID.sessionCategory,
+            actions: [UNNotificationAction(identifier: NotificationID.openSessions,
+                                           title: "Open Sessions", options: [.foreground])],
+            intentIdentifiers: [])
+        let usage = UNNotificationCategory(
+            identifier: NotificationID.usageCategory,
+            actions: [UNNotificationAction(identifier: NotificationID.openUsage,
+                                           title: "Open Usage", options: [.foreground])],
+            intentIdentifiers: [])
+        center.setNotificationCategories([risk, session, usage])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        let options: UNNotificationPresentationOptions = notification.request.content.sound == nil
+            ? [.banner, .list]
+            : [.banner, .list, .sound]
+        completionHandler(options)
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        guard response.actionIdentifier != UNNotificationDismissActionIdentifier else {
+            completionHandler()
+            return
+        }
+        let info = response.notification.request.content.userInfo
+        let route = info[NotificationID.routeKey] as? String
+        let agent = (info[NotificationID.agentKey] as? String).flatMap(AgentKind.init(rawValue:))
+        let sessionID = info[NotificationID.sessionKey] as? String
+        let detectionID = (info[NotificationID.detectionKey] as? String).flatMap(UUID.init(uuidString:))
+        completionHandler()
+
+        Task { @MainActor [weak self] in
+            let key = agent.flatMap { agent in
+                sessionID.map { SessionKey(agent: agent, id: $0) }
+            }
+            switch route.flatMap(Route.init(rawValue:)) {
+            case .detections: self?.onOpenDetections?(detectionID)
+            case .sessions: self?.onOpenSessions?(key)
+            case .usage: self?.onOpenUsage?()
+            case nil: break
             }
         }
     }

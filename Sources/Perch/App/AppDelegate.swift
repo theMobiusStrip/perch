@@ -86,7 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let health = monitoringHealth
         let server = UnixSocketServer { envelope, reply in
             Task { @MainActor in
-                health.noteEvent()
+                if envelope.kind == .hook {
+                    health.noteEvent(agent: envelope.agent)
+                }
                 store.handleEnvelope(envelope, reply: reply)
             }
         }
@@ -209,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        monitoringHealth.persistVerification()
         socketServer?.stop()
         PerchLog.info("Perch terminated")
     }
@@ -226,10 +229,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.onTaskComplete = { [weak self] session, message in
             self?.notifier?.notifyTaskComplete(session: session, message: message)
         }
-        sessionStore.onRiskDetected = { [weak self] session, toolName, risk in
+        sessionStore.onRiskDetected = { [weak self] session, entry in
             self?.attentionPending = true
             self?.notch?.attention()
-            self?.notifier?.notifyRisk(session: session, toolName: toolName, risk: risk)
+            self?.notifier?.notifyRisk(session: session, entry: entry)
         }
         riskFeed.onEmpty = { [weak self] in
             self?.clearNotchAttention()
@@ -247,6 +250,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
         usageStore.onThreshold = { [weak self] label, pct in
             self?.notifier?.notifyUsageThreshold(label: label, pct: pct)
+        }
+        notifier?.onOpenDetections = { [weak self] id in
+            self?.openRecentDetectionsWindow(focusing: id)
+        }
+        notifier?.onOpenSessions = { [weak self] key in
+            self?.notch?.expand(focusing: key)
+        }
+        notifier?.onOpenUsage = { [weak self] in
+            self?.openUsageHistoryWindow()
         }
     }
 
@@ -305,12 +317,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow?.show(runDoctor: runDoctor)
     }
 
-    private func openRecentDetectionsWindow() {
+    private func openRecentDetectionsWindow(focusing id: UUID? = nil) {
         if recentDetectionsWindow == nil {
             recentDetectionsWindow = RecentDetectionsWindowController(
                 feed: riskFeed, posture: securityPosture)
         }
-        recentDetectionsWindow?.show()
+        recentDetectionsWindow?.show(focusing: id)
     }
 
     private func refreshMonitoringHealth() {

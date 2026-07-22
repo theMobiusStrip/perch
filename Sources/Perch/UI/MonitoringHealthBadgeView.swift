@@ -7,16 +7,17 @@ struct MonitoringHealthBadgeView: View {
     let onOpen: () -> Void
 
     var body: some View {
+        let presentation = health.presentation
         Button(action: onOpen) {
             HStack(spacing: 7) {
-                Image(systemName: icon)
+                Image(systemName: icon(for: presentation.state))
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(color)
-                Text(health.snapshot.title)
+                    .foregroundStyle(color(for: presentation.state))
+                Text(presentation.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
                 Spacer(minLength: 6)
-                Text(health.snapshot.summary)
+                Text(presentation.summary)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -26,15 +27,16 @@ struct MonitoringHealthBadgeView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Capsule().fill(color.opacity(0.10)))
-            .overlay(Capsule().strokeBorder(color.opacity(0.24), lineWidth: 1))
+            .background(Capsule().fill(color(for: presentation.state).opacity(0.10)))
+            .overlay(Capsule().strokeBorder(
+                color(for: presentation.state).opacity(0.24), lineWidth: 1))
         }
         .buttonStyle(.plain)
         .help("Open Monitoring Setup and health details")
     }
 
-    private var color: Color {
-        switch health.snapshot.state {
+    private func color(for state: MonitoringCheckState) -> Color {
+        switch state {
         case .checking: return .secondary
         case .ready: return PerchTheme.running
         case .needsAttention: return PerchTheme.attention
@@ -42,8 +44,8 @@ struct MonitoringHealthBadgeView: View {
         }
     }
 
-    private var icon: String {
-        switch health.snapshot.state {
+    private func icon(for state: MonitoringCheckState) -> String {
+        switch state {
         case .checking: return "ellipsis.circle"
         case .ready: return "wave.3.right.circle.fill"
         case .needsAttention: return "wrench.and.screwdriver.fill"

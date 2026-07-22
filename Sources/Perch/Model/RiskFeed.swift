@@ -53,13 +53,23 @@ final class RiskFeed: ObservableObject {
     @discardableResult
     func add(key: SessionKey, toolName: String, toolInput: JSONValue,
              cwd: String?, risk: RiskAssessment, receivedAt: Date = Date()) -> Bool {
-        guard !risk.isEmpty else { return false }
+        addEntry(key: key, toolName: toolName, toolInput: toolInput,
+                 cwd: cwd, risk: risk, receivedAt: receivedAt) != nil
+    }
+
+    /// Entry-returning form used by notification routing so a banner can open
+    /// the exact retained detection rather than merely the newest session row.
+    @discardableResult
+    func addEntry(key: SessionKey, toolName: String, toolInput: JSONValue,
+                  cwd: String?, risk: RiskAssessment,
+                  receivedAt: Date = Date()) -> Entry? {
+        guard !risk.isEmpty else { return nil }
         pruneRecent(now: receivedAt)
         if recent.contains(where: {
             $0.key == key && $0.toolName == toolName && $0.toolInput == toolInput
                 && receivedAt.timeIntervalSince($0.receivedAt) < Self.dedupeWindow
         }) {
-            return false
+            return nil
         }
         let entry = Entry(id: UUID(), key: key, toolName: toolName, toolInput: toolInput,
                           cwd: cwd, receivedAt: receivedAt, risk: risk)
@@ -71,7 +81,7 @@ final class RiskFeed: ObservableObject {
         scheduleExpiry(for: entry.id)
         scheduleRecentExpiry(for: entry.id)
         onAdd?(entry)
-        return true
+        return entry
     }
 
     func dismissFocused() {

@@ -34,6 +34,11 @@ public struct PerchConfig: Codable, Sendable {
     public var playNotificationSounds: Bool
     /// Set once the user finishes or dismisses the guided monitoring setup.
     public var hasCompletedSetup: Bool
+    /// Most recent end-to-end hook event observed from each integration. These
+    /// timestamps distinguish static hook configuration from verified delivery
+    /// across app launches without retaining any event content.
+    public var lastClaudeHookEventAt: Date?
+    public var lastCodexHookEventAt: Date?
     /// Extra keys we don't model yet — preserved verbatim.
     public var extra: [String: JSONValue]
 
@@ -50,6 +55,8 @@ public struct PerchConfig: Codable, Sendable {
         self.notifyUsageThresholds = true
         self.playNotificationSounds = true
         self.hasCompletedSetup = false
+        self.lastClaudeHookEventAt = nil
+        self.lastCodexHookEventAt = nil
         self.extra = [:]
     }
 
@@ -64,6 +71,8 @@ public struct PerchConfig: Codable, Sendable {
         case notifyUsageThresholds
         case playNotificationSounds
         case hasCompletedSetup
+        case lastClaudeHookEventAt
+        case lastCodexHookEventAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -99,6 +108,12 @@ public struct PerchConfig: Codable, Sendable {
         if let v = raw["hasCompletedSetup"]?.boolValue {
             config.hasCompletedSetup = v
         }
+        if let seconds = raw["lastClaudeHookEventAt"]?.double {
+            config.lastClaudeHookEventAt = Date(timeIntervalSince1970: seconds)
+        }
+        if let seconds = raw["lastCodexHookEventAt"]?.double {
+            config.lastCodexHookEventAt = Date(timeIntervalSince1970: seconds)
+        }
         if let obj = raw.objectValue {
             let known = Set(KnownKeys.allCases.map(\.rawValue))
             config.extra = obj.filter { !known.contains($0.key) }
@@ -128,6 +143,12 @@ public struct PerchConfig: Codable, Sendable {
         if !notifyUsageThresholds { obj["notifyUsageThresholds"] = .bool(false) }
         if !playNotificationSounds { obj["playNotificationSounds"] = .bool(false) }
         if hasCompletedSetup { obj["hasCompletedSetup"] = .bool(true) }
+        if let lastClaudeHookEventAt {
+            obj["lastClaudeHookEventAt"] = .number(lastClaudeHookEventAt.timeIntervalSince1970)
+        }
+        if let lastCodexHookEventAt {
+            obj["lastCodexHookEventAt"] = .number(lastCodexHookEventAt.timeIntervalSince1970)
+        }
         try JSONValue.object(obj).encode(to: encoder)
     }
 
