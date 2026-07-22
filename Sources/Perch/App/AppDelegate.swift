@@ -2,14 +2,11 @@ import AppKit
 import Combine
 import PerchCore
 
-/// Menu-bar / notch actions surfaced by StatusItemController. Closures
-/// returning String produce a human-readable result shown in an alert.
+/// Menu-bar / notch actions surfaced by StatusItemController.
 struct AppActions {
-    var installClaudeHooks: () -> String
-    var installCodexHooks: () -> String
-    var uninstallClaudeHooks: () -> String
-    var uninstallCodexHooks: () -> String
-    var doctorReport: () -> String
+    var openSetup: () -> Void
+    var openDoctor: () -> Void
+    var openRecentDetections: () -> Void
     var toggleNotch: () -> Void
     var openDebugWindow: () -> Void
     var openUsageHistory: () -> Void
@@ -23,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let usageStore = UsageStore()
     let riskFeed = RiskFeed()
     let securityPosture = SecurityPosture()
+    let monitoringHealth = MonitoringHealth()
+    let notificationPreferences = NotificationPreferences()
 
     private var socketServer: UnixSocketServer?
     private var livenessMonitor: LivenessMonitor?
@@ -39,9 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var integrityRefreshTimer: Timer?
     private var worktreeRefreshTimer: Timer?
     private var updateCheckTimer: Timer?
+    private var monitoringRefreshTimer: Timer?
     private let updateChecker = UpdateChecker()
     private var usageHistoryWindow: UsageHistoryWindowController?
     private var worktreeWindow: WorktreeWindowController?
+    private var setupWindow: SetupWindowController?
+    private var recentDetectionsWindow: RecentDetectionsWindowController?
     private var cancellables = Set<AnyCancellable>()
     /// True while the notch is showing attention we raised via onAttention.
     /// Lets the session-publish observer clear notification-driven
@@ -68,9 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.usageStore = usageStore
         sessionStore.securityPosture = securityPosture
 
-        let notifier = Notifier(sessions: sessionStore)
+        let notifier = Notifier(sessions: sessionStore, preferences: notificationPreferences)
         self.notifier = notifier
-        notifier.requestAuthorization()
 
         // Keep the bundled bridge at its stable hook-command path. Writes only
         // inside our own app-support dir — safe to do on every launch.
@@ -82,15 +83,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let store = sessionStore
+        let health = monitoringHealth
         let server = UnixSocketServer { envelope, reply in
             Task { @MainActor in
+                health.noteEvent()
                 store.handleEnvelope(envelope, reply: reply)
             }
         }
         do {
             try server.start()
+            monitoringHealth.updateRuntime(isRunning: true)
             PerchLog.info("Socket server listening at \(PerchPaths.socketPath)")
         } catch {
+            monitoringHealth.updateRuntime(isRunning: false, error: error.localizedDescription)
             PerchLog.error("Socket server failed to start: \(error)")
         }
         socketServer = server
@@ -110,28 +115,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return paths.map { URL(fileURLWithPath: $0) }
         }
         // Same live-cwd source keeps a running agent's worktree in `active`.
-        // Filter on isLive: ended Codex sessions stay in the store with
-        // isLive=false (no pid registry to GC them), and counting their cwds
-        // would pin finished worktrees `active` until Perch restarts.
+        // Filter on isLive: recently-ended Codex rows remain briefly for UI
+        // continuity, and counting their cwds would pin finished worktrees
+        // `active` during that grace period.
         worktreeModel.liveCwdsProvider = { [weak self] in
             Set(self?.sessionStore.sessions.filter(\.isLive).compactMap { $0.cwd } ?? [])
         }
         let notchController = NotchController(sessions: sessionStore, usage: usageStore,
                                               riskFeed: riskFeed, posture: securityPosture,
+                                              health: monitoringHealth,
                                               usageHistory: usageHistory, integrity: integrityModel,
                                               worktrees: worktreeModel,
                                               openWorktrees: { [weak self] in self?.openWorktreeWindow() },
-                                              openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() })
+                                              openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
+                                              openSetup: { [weak self] in self?.openSetupWindow() },
+                                              openRecentDetections: { [weak self] in self?.openRecentDetectionsWindow() })
         notchController.show()
         notch = notchController
 
         statusItem = StatusItemController(sessions: sessionStore, usage: usageStore,
                                           riskFeed: riskFeed, posture: securityPosture,
+                                          health: monitoringHealth,
                                           updateChecker: updateChecker,
                                           worktrees: worktreeModel,
                                           actions: makeActions())
 
         wireCrossCutting()
+
+        refreshMonitoringHealth()
+        let monitoringRefresh = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor in self?.refreshMonitoringHealth() }
+        }
+        monitoringRefresh.tolerance = 10
+        monitoringRefreshTimer = monitoringRefresh
+
+        // Existing configured users are not interrupted on upgrade. A fresh
+        // install with no working integration gets the guided setup once.
+        let hasExistingIntegration = ClaudeHookInstaller.installationStatus().isReady
+            || (CodexHookInstaller.installationStatus().isReady
+                && (CodexHookTrust.storedTrustRecordCount() ?? 0) > 0)
+        if !config.hasCompletedSetup && !hasExistingIntegration {
+            DispatchQueue.main.async { [weak self] in self?.openSetupWindow() }
+        }
 
         // Feed the notch usage overview: scan on launch, refresh every 15min
         // (background queue; ~seconds over a month of transcripts).
@@ -238,15 +264,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeActions() -> AppActions {
         AppActions(
-            installClaudeHooks: { Self.runReporting { try ClaudeHookInstaller.install() } },
-            installCodexHooks: { Self.runReporting {
-                var report = try CodexHookInstaller.install()
-                report.notes += CodexHookTrust.ensureTrusted()
-                return report
-            } },
-            uninstallClaudeHooks: { Self.runReporting { try ClaudeHookInstaller.uninstall() } },
-            uninstallCodexHooks: { Self.runReporting { try CodexHookInstaller.uninstall() } },
-            doctorReport: { Doctor.report() },
+            openSetup: { [weak self] in self?.openSetupWindow() },
+            openDoctor: { [weak self] in self?.openSetupWindow(runDoctor: true) },
+            openRecentDetections: { [weak self] in self?.openRecentDetectionsWindow() },
             toggleNotch: { [weak self] in self?.notch?.toggle() },
             openDebugWindow: { [weak self] in
                 guard let self else { return }
@@ -275,11 +295,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageHistoryWindow?.show()
     }
 
-    private static func runReporting(_ body: () throws -> InstallReport) -> String {
-        do {
-            return try body().summaryText
-        } catch {
-            return "Failed: \(error.localizedDescription)"
+    private func openSetupWindow(runDoctor: Bool = false) {
+        if setupWindow == nil, let notifier {
+            setupWindow = SetupWindowController(
+                health: monitoringHealth,
+                preferences: notificationPreferences,
+                notifier: notifier)
+        }
+        setupWindow?.show(runDoctor: runDoctor)
+    }
+
+    private func openRecentDetectionsWindow() {
+        if recentDetectionsWindow == nil {
+            recentDetectionsWindow = RecentDetectionsWindowController(
+                feed: riskFeed, posture: securityPosture)
+        }
+        recentDetectionsWindow?.show()
+    }
+
+    private func refreshMonitoringHealth() {
+        monitoringHealth.refresh()
+        notifier?.authorizationState { [weak self] state in
+            self?.monitoringHealth.updateNotificationState(state)
         }
     }
 }

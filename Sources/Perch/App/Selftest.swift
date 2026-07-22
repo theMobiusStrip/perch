@@ -30,6 +30,7 @@ enum Selftest {
         perchConfigScratchDirsRoundTrip(t)
         perchConfigCheckForUpdatesRoundTrip(t)
         perchConfigWorktreeStaleDaysRoundTrip(t)
+        perchConfigNotificationPreferencesRoundTrip(t)
         semVerParsesAndCompares(t)
         updateCheckDecision(t)
 
@@ -45,6 +46,9 @@ enum Selftest {
         riskFeedAddsFlaggedAndSkipsSafe(t)
         riskFeedDedupesSameCall(t)
         riskFeedDismissAndFocusClamp(t)
+        riskFeedRetainsRecentDetections(t)
+        monitoringSnapshotSeparatesCoverageFromPosture(t)
+        sessionRiskBadgeAgesOut(t)
         handleEnvelopeRoutesUserPromptSubmit(t)
         handleEnvelopeRoutesStop(t)
         handleEnvelopePermissionRequestObserveOnly(t)
@@ -80,6 +84,8 @@ enum Selftest {
 
         // CodexRolloutTailer (0.144 multi-agent rollout shapes)
         codexTailerRoutesSubagentThreads(t)
+        codexTokenAccountingExcludesCachedOverlap(t)
+        codexInactiveSessionsExpire(t)
 
         // CodexHookTrust
         codexTrustRequestShapes(t)
@@ -1129,6 +1135,163 @@ private extension Selftest {
                                           source: .object([:])), sessionID: "sub-2")
         t.expectNil(store.find(agent: .codex, id: "ghost-1"), "noGhostParent")
         t.expectEqual(store.sessions.count, 2, "onlyPeerAndAutomationRows")
+    }
+}
+
+// MARK: - Monitoring UX models
+
+private extension Selftest {
+    @MainActor
+    static func perchConfigNotificationPreferencesRoundTrip(_ t: Checker) {
+        t.suite("PerchConfig.notificationPreferencesRoundTrip")
+        let raw = #"{"notifyDangerousCalls":false,"notifyAttention":false,"notifyTaskCompletion":false,"notifyUsageThresholds":false,"playNotificationSounds":false,"hasCompletedSetup":true,"future":7}"#
+        guard let config = t.unwrap(
+            try? JSONDecoder().decode(PerchConfig.self, from: Data(raw.utf8)),
+            "decode") else { return }
+        t.expectFalse(config.notifyDangerousCalls, "dangerOff")
+        t.expectFalse(config.notifyAttention, "attentionOff")
+        t.expectFalse(config.notifyTaskCompletion, "completionOff")
+        t.expectFalse(config.notifyUsageThresholds, "usageOff")
+        t.expectFalse(config.playNotificationSounds, "soundsOff")
+        t.expectTrue(config.hasCompletedSetup, "setupComplete")
+        t.expectEqual(config.extra["future"], .number(7), "unknownPreserved")
+
+        guard let encoded = t.unwrap(try? JSONEncoder().encode(config), "encode"),
+              let decoded = t.unwrap(
+                try? JSONDecoder().decode(PerchConfig.self, from: encoded),
+                "decodeAgain") else { return }
+        t.expectFalse(decoded.notifyDangerousCalls, "dangerStillOff")
+        t.expectTrue(decoded.hasCompletedSetup, "setupStillComplete")
+
+        guard let defaults = t.unwrap(
+            try? JSONDecoder().decode(PerchConfig.self, from: Data("{}".utf8)),
+            "decodeDefaults") else { return }
+        t.expectTrue(defaults.notifyDangerousCalls, "dangerDefaultsOn")
+        t.expectTrue(defaults.notifyAttention, "attentionDefaultsOn")
+        t.expectTrue(defaults.notifyTaskCompletion, "completionDefaultsOn")
+        t.expectTrue(defaults.notifyUsageThresholds, "usageDefaultsOn")
+        t.expectTrue(defaults.playNotificationSounds, "soundsDefaultOn")
+        t.expectFalse(defaults.hasCompletedSetup, "setupDefaultsIncomplete")
+    }
+
+    @MainActor
+    static func riskFeedRetainsRecentDetections(_ t: Checker) {
+        t.suite("RiskFeed.retainsRecentDetections")
+        let feed = RiskFeed()
+        let key = SessionKey(agent: .claude, id: "recent")
+        let input: JSONValue = .object(["command": .string("sudo rm -rf /tmp/x")])
+        let risk = RiskAssessor.assess(agent: .claude, toolName: "Bash", input: input)
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+
+        t.expectTrue(feed.add(key: key, toolName: "Bash", toolInput: input,
+                              cwd: "/tmp/project", risk: risk, receivedAt: now),
+                     "firstAdded")
+        feed.dismissFocused()
+        t.expectTrue(feed.isEmpty, "cardDismissed")
+        t.expectEqual(feed.recent.count, 1, "historyRetained")
+        t.expectFalse(feed.add(key: key, toolName: "Bash", toolInput: input,
+                               cwd: nil, risk: risk, receivedAt: now.addingTimeInterval(1)),
+                      "dismissDoesNotDefeatDedupe")
+        feed.pruneRecent(now: now.addingTimeInterval(RiskFeed.recentWindow + 1))
+        t.expectTrue(feed.recent.isEmpty, "historyAgesOut")
+    }
+
+    @MainActor
+    static func monitoringSnapshotSeparatesCoverageFromPosture(_ t: Checker) {
+        t.suite("MonitoringSnapshot.coverageState")
+        func check(_ title: String, _ state: MonitoringCheckState) -> MonitoringCheck {
+            MonitoringCheck(title: title, state: state, summary: title, detail: nil)
+        }
+        let noHooks = MonitoringSnapshot(
+            bridge: check("Bridge", .ready), socket: check("Runtime", .ready),
+            claude: check("Claude Code", .needsAttention),
+            codex: check("Codex", .needsAttention))
+        t.expectEqual(noHooks.state, .needsAttention, "quietButUncoveredNeedsSetup")
+        t.expectFalse(noHooks.hasConfiguredAgent, "noConfiguredAgent")
+
+        let claudeCovered = MonitoringSnapshot(
+            bridge: check("Bridge", .ready), socket: check("Runtime", .ready),
+            claude: check("Claude Code", .ready), codex: check("Codex", .needsAttention))
+        t.expectEqual(claudeCovered.state, .ready, "oneCoveredAgentIsActive")
+        t.expectTrue(claudeCovered.hasConfiguredAgent, "configuredAgent")
+
+        let runtimeDown = MonitoringSnapshot(
+            bridge: check("Bridge", .ready), socket: check("Runtime", .unavailable),
+            claude: check("Claude Code", .ready), codex: check("Codex", .ready))
+        t.expectEqual(runtimeDown.state, .unavailable, "runtimeFailureWins")
+    }
+
+    @MainActor
+    static func sessionRiskBadgeAgesOut(_ t: Checker) {
+        t.suite("Session.riskBadgeAging")
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        var session = Session(key: SessionKey(agent: .claude, id: "risk-age"))
+        session.lastRisk = .danger
+        session.lastRiskAt = now
+        t.expectEqual(session.visibleRisk(at: now), .danger, "visibleImmediately")
+        t.expectEqual(session.visibleRisk(at: now.addingTimeInterval(Session.riskBadgeTTL)),
+                      .danger, "visibleAtBoundary")
+        t.expectNil(session.visibleRisk(
+            at: now.addingTimeInterval(Session.riskBadgeTTL + 1)), "hiddenAfterTTL")
+    }
+
+    @MainActor
+    static func codexTokenAccountingExcludesCachedOverlap(_ t: Checker) {
+        t.suite("CodexTailer.tokenAccounting")
+        t.expectEqual(CodexRolloutTailer.uncachedInputTokens(
+            totalInput: 1_000, cachedInput: 400), 600, "pureSplit")
+        t.expectEqual(CodexRolloutTailer.uncachedInputTokens(
+            totalInput: 100, cachedInput: 200), 0, "malformedFloorsAtZero")
+
+        let store = SessionStore()
+        let tailer = CodexRolloutTailer(store: store, usage: UsageStore())
+        tailer.ingestLineForSelftest(.object([
+            "type": .string("event_msg"),
+            "payload": .object([
+                "type": .string("token_count"),
+                "info": .object([
+                    "total_token_usage": .object([
+                        "input_tokens": .integer(1_000),
+                        "cached_input_tokens": .integer(400),
+                        "output_tokens": .integer(100),
+                    ]),
+                ]),
+            ]),
+        ]), sessionID: "token-session")
+        guard let session = t.unwrap(store.find(agent: .codex, id: "token-session"),
+                                     "sessionCreated") else { return }
+        t.expectEqual(session.inputTokens, 600, "uncachedStored")
+        t.expectEqual(session.cacheReadTokens, 400, "cachedStored")
+        t.expectEqual(session.totalTokens, 1_100, "totalNotDoubleCounted")
+    }
+
+    @MainActor
+    static func codexInactiveSessionsExpire(_ t: Checker) {
+        t.suite("SessionStore.codexExpiration")
+        let store = SessionStore()
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        store.upsert(agent: .codex, id: "visibility") { $0.lastActivity = now }
+        t.expectTrue(store.sessions.contains { $0.key.id == "visibility" }, "livePublished")
+        store.setCodexLive(id: "visibility", live: false)
+        t.expectFalse(store.sessions.contains { $0.key.id == "visibility" }, "inactiveHidden")
+        t.expectTrue(store.find(agent: .codex, id: "visibility") != nil,
+                     "inactiveMetadataRetained")
+        store.upsert(agent: .codex, id: "old") {
+            $0.lastActivity = now.addingTimeInterval(-SessionStore.codexSessionTTL - 1)
+            $0.isLive = false
+        }
+        store.upsert(agent: .codex, id: "recent") {
+            $0.lastActivity = now.addingTimeInterval(-30)
+            $0.isLive = false
+        }
+        store.upsert(agent: .claude, id: "claude") {
+            $0.lastActivity = now.addingTimeInterval(-10_000)
+            $0.isLive = false
+        }
+        t.expectEqual(store.expireInactiveCodex(now: now), 1, "oneExpired")
+        t.expectNil(store.find(agent: .codex, id: "old"), "oldRemoved")
+        t.expectTrue(store.find(agent: .codex, id: "recent") != nil, "recentRetained")
+        t.expectTrue(store.find(agent: .claude, id: "claude") != nil, "claudeUnaffected")
     }
 }
 

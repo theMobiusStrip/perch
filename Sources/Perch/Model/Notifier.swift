@@ -2,6 +2,26 @@ import Foundation
 import PerchCore
 import UserNotifications
 
+enum NotificationAuthorizationState: String, Sendable {
+    case unavailable
+    case notRequested
+    case denied
+    case allowed
+    case provisional
+    case unknown
+
+    var label: String {
+        switch self {
+        case .unavailable: return "Unavailable outside Perch.app"
+        case .notRequested: return "Not requested"
+        case .denied: return "Blocked in System Settings"
+        case .allowed: return "Allowed"
+        case .provisional: return "Allowed quietly"
+        case .unknown: return "Unknown"
+        }
+    }
+}
+
 /// User-notification fan-out: risk detected / session needs input, task
 /// complete, usage thresholds, and a stuck-session sweep.
 ///
@@ -13,6 +33,7 @@ import UserNotifications
 @MainActor
 final class Notifier {
     private let sessions: SessionStore
+    private let preferences: NotificationPreferences
 
     /// Dedupe: fingerprint → last fired. Same fingerprint within
     /// `dedupeWindow` is skipped.
@@ -30,8 +51,9 @@ final class Notifier {
     private let notificationsAvailable: Bool =
         Bundle.main.bundlePath.hasSuffix(".app") && Bundle.main.bundleIdentifier != nil
 
-    init(sessions: SessionStore) {
+    init(sessions: SessionStore, preferences: NotificationPreferences) {
         self.sessions = sessions
+        self.preferences = preferences
         let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.sweepStuckSessions()
@@ -51,25 +73,49 @@ final class Notifier {
 
     // MARK: - Authorization
 
-    func requestAuthorization() {
+    func requestAuthorization(completion: ((NotificationAuthorizationState) -> Void)? = nil) {
         guard notificationsAvailable else {
             PerchLog.info("Skipping notification authorization (no .app bundle)", category: "notify")
+            completion?(.unavailable)
             return
         }
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            if let error {
-                PerchLog.warn("Notification authorization failed: \(error.localizedDescription)",
-                              category: "notify")
-                return
+            Task { @MainActor in
+                if let error {
+                    PerchLog.warn("Notification authorization failed: \(error.localizedDescription)",
+                                  category: "notify")
+                    completion?(.unknown)
+                    return
+                }
+                PerchLog.info("Notification authorization granted=\(granted)", category: "notify")
+                completion?(granted ? .allowed : .denied)
             }
-            PerchLog.info("Notification authorization granted=\(granted)", category: "notify")
+        }
+    }
+
+    func authorizationState(completion: @escaping (NotificationAuthorizationState) -> Void) {
+        guard notificationsAvailable else {
+            completion(.unavailable)
+            return
+        }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let state: NotificationAuthorizationState
+            switch settings.authorizationStatus {
+            case .notDetermined: state = .notRequested
+            case .denied: state = .denied
+            case .authorized, .ephemeral: state = .allowed
+            case .provisional: state = .provisional
+            @unknown default: state = .unknown
+            }
+            Task { @MainActor in completion(state) }
         }
     }
 
     // MARK: - Public notification entry points
 
     func notifyAttention(session: Session, reason: String) {
+        guard preferences.attention else { return }
         let fingerprint = "attention|\(session.key.agent.rawValue)|\(session.key.id)|\(reason)"
         guard shouldFire(fingerprint) else { return }
         post(title: "\(session.displayTitle) needs attention",
@@ -81,6 +127,7 @@ final class Notifier {
     /// prompt (a whitelisted or auto-approved dangerous call is exactly the
     /// one you must hear about).
     func notifyRisk(session: Session, toolName: String, risk: RiskAssessment) {
+        guard preferences.dangerousCalls else { return }
         let codes = risk.findings.map(\.code).joined(separator: ",")
         let fingerprint = "risk|\(session.key.agent.rawValue)|\(session.key.id)|\(toolName)|\(codes)"
         guard shouldFire(fingerprint) else { return }
@@ -91,6 +138,7 @@ final class Notifier {
     }
 
     func notifyTaskComplete(session: Session, message: String?) {
+        guard preferences.taskCompletion else { return }
         let fingerprint = "complete|\(session.key.agent.rawValue)|\(session.key.id)"
         guard shouldFire(fingerprint) else { return }
         let body: String
@@ -105,6 +153,7 @@ final class Notifier {
     }
 
     func notifyUsageThreshold(label: String, pct: Double) {
+        guard preferences.usageThresholds else { return }
         let fingerprint = "usage|\(label)"
         guard shouldFire(fingerprint) else { return }
         post(title: "\(label) usage at \(Int(pct.rounded()))%",
@@ -152,7 +201,7 @@ final class Notifier {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = preferences.sounds ? .default : nil
         content.threadIdentifier = threadId
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content,

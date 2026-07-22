@@ -77,15 +77,37 @@ enum CodexHookInstaller {
 
     // MARK: - Status
 
-    static func status(hooksPath: URL = CodexHookInstaller.hooksPath) -> String {
+    static func installationStatus(
+        hooksPath: URL = CodexHookInstaller.hooksPath
+    ) -> HookInstallationStatus {
         guard FileManager.default.fileExists(atPath: hooksPath.path) else {
-            return "Codex: hooks not installed (no hooks.json at \(hooksPath.path))"
+            return HookInstallationStatus(state: .missing, wiredEvents: 0,
+                                          totalEvents: allEvents.count,
+                                          summary: "Hooks not installed")
         }
         guard let file = try? InstallSupport.readObjectFile(at: hooksPath) else {
-            return "Codex: hooks.json exists but cannot be parsed (\(hooksPath.path))"
+            return HookInstallationStatus(state: .unreadable, wiredEvents: 0,
+                                          totalEvents: allEvents.count,
+                                          summary: "hooks.json cannot be read safely")
         }
         let wired = InstallSupport.wiredEventCount(root: file.object, events: allEvents)
-        return "Codex: hooks \(wired)/\(allEvents.count) events — \(hooksPath.path)"
+        return HookInstallationStatus(
+            state: wired == allEvents.count ? .ready : .partial,
+            wiredEvents: wired,
+            totalEvents: allEvents.count,
+            summary: "\(wired)/\(allEvents.count) hooks installed")
+    }
+
+    static func status(hooksPath: URL = CodexHookInstaller.hooksPath) -> String {
+        let status = installationStatus(hooksPath: hooksPath)
+        switch status.state {
+        case .missing:
+            return "Codex: hooks not installed (no hooks.json at \(hooksPath.path))"
+        case .unreadable:
+            return "Codex: hooks.json exists but cannot be parsed (\(hooksPath.path))"
+        case .partial, .ready:
+            return "Codex: \(status.summary) — \(hooksPath.path)"
+        }
     }
 
     // MARK: - Version detection

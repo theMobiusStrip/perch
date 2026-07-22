@@ -13,6 +13,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let usage: UsageStore
     private let riskFeed: RiskFeed
     private let posture: SecurityPosture
+    private let health: MonitoringHealth
     private let updateChecker: UpdateChecker
     private let worktrees: WorktreeModel
     private let actions: AppActions
@@ -22,12 +23,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
-         posture: SecurityPosture, updateChecker: UpdateChecker,
+         posture: SecurityPosture, health: MonitoringHealth,
+         updateChecker: UpdateChecker,
          worktrees: WorktreeModel, actions: AppActions) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
         self.posture = posture
+        self.health = health
         self.updateChecker = updateChecker
         self.worktrees = worktrees
         self.actions = actions
@@ -86,8 +89,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         // Opening the menu is a good moment to refresh (throttled, non-blocking).
         updateChecker.checkIfStale()
+        health.refresh()
 
-        // Security posture.
+        // Monitoring coverage is separate from recent risk activity.
+        menu.addItem(infoItem("\(health.snapshot.title) — \(health.snapshot.summary)"))
         menu.addItem(infoItem("Security \(posture.score)/100 — \(posture.grade.rawValue)",
                               monospacedDigits: true))
         menu.addItem(.separator())
@@ -124,19 +129,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(actionItem("Debug Window", #selector(openDebugWindow), key: "d"))
         menu.addItem(.separator())
 
-        menu.addItem(actionItem("Install Claude Hooks…", #selector(installClaudeHooks)))
-        menu.addItem(actionItem("Install Codex Hooks…", #selector(installCodexHooks)))
-
-        let uninstallItem = NSMenuItem(title: "Uninstall…", action: nil, keyEquivalent: "")
-        let uninstallMenu = NSMenu(title: "Uninstall…")
-        uninstallMenu.autoenablesItems = false
-        uninstallMenu.addItem(actionItem("Uninstall Claude Hooks…", #selector(uninstallClaudeHooks)))
-        uninstallMenu.addItem(actionItem("Uninstall Codex Hooks…", #selector(uninstallCodexHooks)))
-        uninstallItem.submenu = uninstallMenu
-        uninstallItem.isEnabled = true
-        menu.addItem(uninstallItem)
-
-        menu.addItem(actionItem("Doctor", #selector(runDoctor)))
+        menu.addItem(actionItem("Monitoring Setup…", #selector(openSetup)))
+        menu.addItem(actionItem("Recent Detections…", #selector(openRecentDetections)))
+        menu.addItem(actionItem("Run Doctor…", #selector(runDoctor)))
         menu.addItem(.separator())
 
         let routesItem = NSMenuItem(title: "Quick Routes", action: nil, keyEquivalent: "")
@@ -333,25 +328,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func openWorktrees() { actions.openWorktrees() }
     @objc private func quit() { actions.quit() }
 
-    @objc private func installClaudeHooks() {
-        showText(actions.installClaudeHooks(), title: "Install Claude Hooks")
-    }
-
-    @objc private func installCodexHooks() {
-        showText(actions.installCodexHooks(), title: "Install Codex Hooks")
-    }
-
-    @objc private func uninstallClaudeHooks() {
-        showText(actions.uninstallClaudeHooks(), title: "Uninstall Claude Hooks")
-    }
-
-    @objc private func uninstallCodexHooks() {
-        showText(actions.uninstallCodexHooks(), title: "Uninstall Codex Hooks")
-    }
-
-    @objc private func runDoctor() {
-        showText(actions.doctorReport(), title: "Perch Doctor")
-    }
+    @objc private func openSetup() { actions.openSetup() }
+    @objc private func openRecentDetections() { actions.openRecentDetections() }
+    @objc private func runDoctor() { actions.openDoctor() }
 
     // MARK: - Update actions
 

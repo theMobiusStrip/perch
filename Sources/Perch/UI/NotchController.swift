@@ -28,11 +28,14 @@ final class NotchController {
     private let usage: UsageStore
     private let riskFeed: RiskFeed
     private let posture: SecurityPosture
+    private let health: MonitoringHealth
     private let usageHistory: UsageHistoryModel
     private let integrity: IntegrityModel
     private let worktrees: WorktreeModel
     private let openWorktrees: () -> Void
     private let openUsageHistory: () -> Void
+    private let openSetup: () -> Void
+    private let openRecentDetections: () -> Void
 
     private let state = NotchViewState()
     private var panel: NotchPanel?
@@ -48,19 +51,25 @@ final class NotchController {
     private static let collapseAnimation = Animation.spring(response: 0.36, dampingFraction: 0.88)
 
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
-         posture: SecurityPosture, usageHistory: UsageHistoryModel,
+         posture: SecurityPosture, health: MonitoringHealth,
+         usageHistory: UsageHistoryModel,
          integrity: IntegrityModel, worktrees: WorktreeModel,
          openWorktrees: @escaping () -> Void,
-         openUsageHistory: @escaping () -> Void) {
+         openUsageHistory: @escaping () -> Void,
+         openSetup: @escaping () -> Void,
+         openRecentDetections: @escaping () -> Void) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
         self.posture = posture
+        self.health = health
         self.usageHistory = usageHistory
         self.integrity = integrity
         self.worktrees = worktrees
         self.openWorktrees = openWorktrees
         self.openUsageHistory = openUsageHistory
+        self.openSetup = openSetup
+        self.openRecentDetections = openRecentDetections
         state.controller = self
     }
 
@@ -184,10 +193,12 @@ final class NotchController {
         geometry = geo
         let panel = NotchPanel(contentRect: geo.windowFrame)
         let root = NotchRootView(state: state, sessions: sessions, usage: usage,
-                                 riskFeed: riskFeed, posture: posture,
+                                 riskFeed: riskFeed, posture: posture, health: health,
                                  usageHistory: usageHistory, integrity: integrity,
                                  worktrees: worktrees, openWorktrees: openWorktrees,
-                                 openUsageHistory: openUsageHistory)
+                                 openUsageHistory: openUsageHistory,
+                                 openSetup: openSetup,
+                                 openRecentDetections: openRecentDetections)
         let hosting = NotchHostingView(rootView: root)
         hosting.sizingOptions = []  // window frame is static; never autosize
         hosting.frame = NSRect(origin: .zero, size: geo.windowFrame.size)

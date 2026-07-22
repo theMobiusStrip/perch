@@ -9,8 +9,8 @@ enum Doctor {
         var lines: [String] = []
         lines.append("Perch Doctor — \(AppVersion.string) — \(timestamp())")
         lines.append("")
-        lines.append(bridgeLine())
-        lines.append(socketLine())
+        lines.append(render(bridgeCheck()))
+        lines.append(render(socketCheck()))
         lines.append(ClaudeHookInstaller.status())
         lines.append(CodexHookInstaller.status())
         lines.append(CodexHookInstaller.versionSupportNote())
@@ -30,16 +30,20 @@ enum Doctor {
 
     // MARK: - Checks
 
-    private static func bridgeLine() -> String {
+    static func bridgeCheck() -> MonitoringCheck {
         let path = PerchPaths.bridgeInstallPath.path
         let fm = FileManager.default
         guard fm.fileExists(atPath: path) else {
-            return "Bridge: NOT DEPLOYED — expected at \(path); launch Perch.app once to deploy."
+            return MonitoringCheck(title: "Bridge", state: .unavailable,
+                                   summary: "Bridge is not deployed",
+                                   detail: "Expected at \(path); relaunch Perch.app to deploy it.")
         }
         guard fm.isExecutableFile(atPath: path) else {
-            return "Bridge: present at \(path) but NOT EXECUTABLE — relaunch Perch.app to redeploy."
+            return MonitoringCheck(title: "Bridge", state: .unavailable,
+                                   summary: "Bridge is not executable",
+                                   detail: "Present at \(path); relaunch Perch.app to redeploy it.")
         }
-        var detail = ""
+        var details = [path]
         if let attrs = try? fm.attributesOfItem(atPath: path) {
             var parts: [String] = []
             if let size = (attrs[.size] as? NSNumber)?.doubleValue {
@@ -52,20 +56,29 @@ enum Doctor {
                 parts.append("modified \(df.string(from: mtime))")
             }
             if !parts.isEmpty {
-                detail = " (\(parts.joined(separator: ", ")))"
+                details.append(parts.joined(separator: ", "))
             }
         }
-        return "Bridge: OK at \(path)\(detail)"
+        return MonitoringCheck(title: "Bridge", state: .ready,
+                               summary: "Bridge deployed",
+                               detail: details.joined(separator: " · "))
     }
 
-    private static func socketLine() -> String {
+    static func socketCheck() -> MonitoringCheck {
         let path = PerchPaths.socketPath
         guard FileManager.default.fileExists(atPath: path) else {
-            return "Socket: no socket at \(path) — Perch's server has not started."
+            return MonitoringCheck(title: "Runtime", state: .unavailable,
+                                   summary: "Local event server is not running",
+                                   detail: "No socket at \(path).")
         }
-        return socketAcceptsConnection(path)
-            ? "Socket: live at \(path)"
-            : "Socket: file exists at \(path) but nothing is listening — is Perch running?"
+        if socketAcceptsConnection(path) {
+            return MonitoringCheck(title: "Runtime", state: .ready,
+                                   summary: "Local event server is listening",
+                                   detail: path)
+        }
+        return MonitoringCheck(title: "Runtime", state: .unavailable,
+                               summary: "Socket exists but no server is listening",
+                               detail: path)
     }
 
     /// True when something accepts a connection on the unix socket. The
@@ -100,5 +113,11 @@ enum Doctor {
         df.locale = Locale(identifier: "en_US_POSIX")
         df.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return df.string(from: Date())
+    }
+
+    private static func render(_ check: MonitoringCheck) -> String {
+        let status = check.isReady ? "OK" : "NEEDS ATTENTION"
+        let detail = check.detail.map { " — \($0)" } ?? ""
+        return "\(check.title): \(status) — \(check.summary)\(detail)"
     }
 }

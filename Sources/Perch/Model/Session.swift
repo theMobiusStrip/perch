@@ -53,6 +53,7 @@ struct Session: Identifiable, Equatable {
     var lastAssistantSnippet: String?
     /// Risk level of the most recent flagged tool call (for the row badge).
     var lastRisk: RiskLevel = .safe
+    var lastRiskAt: Date?
 
     var inputTokens: Int = 0
     var outputTokens: Int = 0
@@ -86,6 +87,15 @@ struct Session: Identifiable, Equatable {
 
 extension Session {
     static let timelineCap = 200
+    static let riskBadgeTTL: TimeInterval = 5 * 60
+
+    /// Row badges are an immediate-attention cue, not a permanent label on a
+    /// session. The retained detection history remains available for an hour.
+    func visibleRisk(at date: Date = Date()) -> RiskLevel? {
+        guard lastRisk != .safe, let lastRiskAt,
+              date.timeIntervalSince(lastRiskAt) <= Self.riskBadgeTTL else { return nil }
+        return lastRisk
+    }
 
     mutating func appendTimeline(_ event: ToolEvent) {
         timeline.append(event)
