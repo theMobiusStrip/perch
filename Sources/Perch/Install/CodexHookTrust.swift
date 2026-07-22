@@ -133,19 +133,26 @@ enum CodexHookTrust {
         return count
     }
 
+    static func storedTrustRecordCount(
+        codexHome: URL = PerchPaths.codexHomeDir
+    ) -> Int? {
+        let configPath = codexHome.appendingPathComponent("config.toml")
+        guard let text = try? String(contentsOf: configPath, encoding: .utf8) else { return nil }
+        return trustRecordCount(configToml: text)
+    }
+
     /// One-line Doctor summary based on the config.toml scan.
     static func doctorLine(codexHome: URL = PerchPaths.codexHomeDir) -> String {
         let configPath = codexHome.appendingPathComponent("config.toml")
-        guard let text = try? String(contentsOf: configPath, encoding: .utf8) else {
+        guard let count = storedTrustRecordCount(codexHome: codexHome) else {
             return "Codex hook trust: no config.toml — install Codex hooks to set it up."
         }
-        let count = trustRecordCount(configToml: text)
         if count > 0 {
             return "Codex hook trust: \(count) trust record(s) in \(configPath.path) — hooks run without the /hooks prompt. "
-                + "Changing the registered hooks invalidates the hash; re-run Install Codex Hooks afterwards."
+                + "Changing the registered hooks invalidates the hash; repair Codex in Monitoring Setup afterwards."
         }
         return "Codex hook trust: NO trust record in \(configPath.path) — Codex will not run Perch's hooks. "
-            + "Install Codex Hooks (auto-trusts) or run /hooks once in the Codex CLI."
+            + "Repair Codex in Monitoring Setup (auto-trusts) or run /hooks once in the Codex CLI."
     }
 
     // MARK: - Driver

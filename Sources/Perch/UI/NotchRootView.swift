@@ -13,11 +13,14 @@ struct NotchRootView: View {
     @ObservedObject var usage: UsageStore
     @ObservedObject var riskFeed: RiskFeed
     @ObservedObject var posture: SecurityPosture
+    @ObservedObject var health: MonitoringHealth
     @ObservedObject var usageHistory: UsageHistoryModel
     @ObservedObject var integrity: IntegrityModel
     @ObservedObject var worktrees: WorktreeModel
     let openWorktrees: () -> Void
     let openUsageHistory: () -> Void
+    let openSetup: () -> Void
+    let openRecentDetections: () -> Void
     /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
     /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
     var renderStatic = false
@@ -103,7 +106,8 @@ struct NotchRootView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PostureBadgeView(posture: posture)
+            MonitoringHealthBadgeView(health: health, onOpen: openSetup)
+            PostureBadgeView(posture: posture, onOpen: openRecentDetections)
             if !riskFeed.isEmpty {
                 RiskCardView(feed: riskFeed, renderStatic: renderStatic)
             }
@@ -198,9 +202,16 @@ struct NotchRootView: View {
                 Text("No agent sessions")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("Start claude or codex in a terminal")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                if health.snapshot.hasConfiguredAgent {
+                    Text("Start Claude Code or Codex")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Button("Finish monitoring setup", action: openSetup)
+                        .font(.system(size: 10, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(PerchTheme.attention)
+                }
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)

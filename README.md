@@ -17,7 +17,7 @@ turns dangerous. Never gets in the way.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Local only](https://img.shields.io/badge/telemetry-zero-brightgreen)](#security-model)
 
-<img src="docs/img/notch.png" width="760" alt="Perch's notch panel: security score 75 (Elevated), a Bash call flagged dangerous — 'runs as root (sudo), downloads and pipes into a shell' — with the exact command shown, plus worktree and token glance lines and rate-limit gauges">
+<img src="docs/img/notch.png" width="760" alt="Perch's notch panel: monitoring active for Claude Code and Codex, security score 75 (Elevated), a Bash call flagged dangerous, plus live sessions, worktree and token glance lines, and rate-limit gauges">
 
 </div>
 
@@ -55,8 +55,9 @@ and what they've **left behind**:
 |---|---|
 | ⚡ **Actions** — risk on every tool call | Offline heuristic scoring of each tool call as it happens: `rm -rf`, `sudo`, `curl \| sh`, credential reads, force-pushes, raw-IP traffic, and writes to the agent's own brain (`CLAUDE.md`, `~/.claude` settings/hooks). Danger fires an OS notification; every rule is in one readable file: [`RiskAssessor.swift`](Sources/PerchCore/RiskAssessor.swift). |
 | 🧭 **Footholds** — the persistence surface, live | A separate notch page scans the files an agent would use to *survive* a session — config/hooks, MCP servers, `CLAUDE.md`/memory, `LaunchAgents`, shell profiles — and shows their current state: recently changed, carrying a hook that isn't Perch's, or unreadable. Straight from disk, so it covers changes made before Perch launched. |
+| 📡 **Monitoring health** | A separate coverage strip verifies the deployed bridge, local event socket, Claude wiring, and Codex hook trust. Guided setup installs or repairs integrations and makes a disconnected-but-quiet app visibly different from a healthy one. |
 | 🔔 **Alerts even when nothing prompts** | Danger fires an OS notification — including calls auto-approved by allow rules or relaxed permission modes. The riskiest calls are exactly the ones nobody asks you about. |
-| 📊 **Security score** | A rolling 0–100 posture score in the notch and menu bar: −25 per danger, −5 per caution over the last hour. A quiet hour heals it back to 100. |
+| 📊 **Explainable security score** | A rolling 0–100 posture score in the notch and menu bar: −25 per danger, −5 per caution over the last hour. Open the strip for the formula and retained recent detections; dismissing an alert card does not erase its history. |
 | 🐦 **Every session at a glance** | Live list of all Claude Code and Codex sessions — running / waiting / idle, last message, context gauge, red badge on any session that just ran something dangerous. |
 | 🎫 **Token usage** | Today / 7-day / 30-day totals in the notch, rate-limit gauges with reset countdowns, and a full per-day / per-model / per-project dashboard (menu bar → **Token Usage…**). |
 | 🌳 **Worktree housekeeping** | A read-only cross-project audit of the git worktrees agent sessions leave behind — classified `reclaimable` (clean, merged, stale), `review` (dirty or ahead of the default branch), `active` (a live session or recently touched), or `orphaned` — with disk sizes and a *Copy cleanup commands* button (menu bar → **Worktrees…**). Perch scores and reports; it never deletes. |
@@ -159,26 +160,25 @@ locally rather than notarized by Apple, so macOS asks you to confirm:
 </td></tr>
 </table>
 
-**3.** Register the hooks: click the Perch bird in the menu bar →
-**Install Claude Hooks…** and/or **Install Codex Hooks…**
-(your existing settings are parse-merged, backed up, and fully restorable —
-see [Security model](#security-model)).
+**3.** Complete the guided setup that opens on a fresh install, or click the
+Perch bird in the menu bar → **Monitoring Setup…**. Install Claude Code and/or
+Codex monitoring there (your existing settings are parse-merged, backed up,
+and fully restorable — see [Security model](#security-model)).
 
-**4.** Restart any running agent sessions and verify everything with menu
-bar → **Doctor**. Codex requires its hooks to be explicitly trusted before
+**4.** Restart any running agent sessions and verify everything with **Run
+Doctor** in setup or the menu bar. Doctor and hook installation run in the
+background, so the menu and setup window stay responsive. Codex requires its hooks to be explicitly trusted before
 it will run them; the installer records that trust automatically (the same
 write the Codex CLI's `/hooks` screen performs — see
 [Security model](#security-model)). If auto-trust fails (e.g. an old Codex
 CLI), the install report says so — run `/hooks` once in the terminal
 `codex` TUI instead (the desktop app has no `/hooks` command).
 
-**5.** Allow notifications — then mute them. Perch's danger alerts are macOS
-notifications, so a hijacked agent's `rm -rf` or `curl … | sudo sh` is
-impossible to miss. On first launch macOS asks to allow them — click
-**Allow**. To keep the alerts visible but silent (recommended — you want to
-*see* them, not get pinged on every flag), open **System Settings →
-Notifications → Perch**: keep **Allow Notifications** on and a banner style
-selected, and turn **off** *Play sound for notifications*.
+**5.** In **Monitoring Setup…**, allow notifications and choose which event
+categories should interrupt you. To keep alerts visible but silent
+(recommended — you want to *see* them, not get pinged on every flag), turn
+off **Play notification sounds**. System Settings remains the authority for
+macOS banner style and permission.
 
 ### Option 2 — Build from source
 

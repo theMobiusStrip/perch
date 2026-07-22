@@ -158,7 +158,10 @@ enum ShowcaseRenderer {
             cwd: "/Users/dev/api-server",
             risk: RiskAssessor.assess(agent: .claude, toolName: "Bash",
                                       input: .object(["command": .string(demoCommand)])))
-        sessions.upsert(agent: .claude, id: "demo-api") { $0.lastRisk = .danger }
+        sessions.upsert(agent: .claude, id: "demo-api") {
+            $0.lastRisk = .danger
+            $0.lastRiskAt = Date()
+        }
         posture.record(.danger)
         usageHistory.injectSnapshot(demoUsageSnapshot())
 
@@ -188,6 +191,15 @@ enum ShowcaseRenderer {
         ]))
 
         let state = NotchViewState()
+        let health = MonitoringHealth()
+        let ready = { (title: String, summary: String) in
+            MonitoringCheck(title: title, state: .ready, summary: summary, detail: nil)
+        }
+        health.injectSnapshot(MonitoringSnapshot(
+            bridge: ready("Bridge", "Bridge deployed"),
+            socket: ready("Runtime", "Local event server is listening"),
+            claude: ready("Claude Code", "Hooks installed"),
+            codex: ready("Codex", "Hooks installed and trusted")))
         state.isExpanded = true
         state.hasAttention = true
         state.hasNotch = true
@@ -195,15 +207,16 @@ enum ShowcaseRenderer {
         // than the app's live panel; a taller showcase shell keeps the glance
         // lines and gauges visible instead of clipping at the shell bottom.
         state.expandedSize = CGSize(width: state.expandedSize.width,
-                                    height: state.expandedSize.height + 155)
+                                    height: state.expandedSize.height + 195)
 
         let size = CGSize(width: state.expandedSize.width + 120,
                           height: state.expandedSize.height + 48)
         let view = NotchRootView(state: state, sessions: sessions, usage: usage,
-                                 riskFeed: riskFeed, posture: posture,
+                                 riskFeed: riskFeed, posture: posture, health: health,
                                  usageHistory: usageHistory, integrity: integrity,
                                  worktrees: worktrees, openWorktrees: {},
-                                 openUsageHistory: {}, renderStatic: true)
+                                 openUsageHistory: {}, openSetup: {},
+                                 openRecentDetections: {}, renderStatic: true)
             .frame(width: state.expandedSize.width, height: state.expandedSize.height)
             // ImageRenderer otherwise lets the shell negotiate up to the
             // proposed canvas; fixedSize pins it to the frame above so the

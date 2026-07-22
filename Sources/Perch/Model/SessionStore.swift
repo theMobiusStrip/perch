@@ -6,6 +6,8 @@ import PerchCore
 /// liveness monitor.
 @MainActor
 final class SessionStore: ObservableObject {
+    nonisolated static let codexSessionTTL: TimeInterval = 30 * 60
+
     @Published private(set) var sessions: [Session] = []
 
     // Wired by AppDelegate.
@@ -109,7 +111,10 @@ final class SessionStore: ObservableObject {
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
                 s.state = .executing
-                if !risk.isEmpty { s.lastRisk = risk.level }
+                if !risk.isEmpty {
+                    s.lastRisk = risk.level
+                    s.lastRiskAt = now
+                }
                 if risk.level == .danger {
                     s.attentionNote = "DANGER: \(risk.findings.first?.message ?? toolName)"
                 }
@@ -163,7 +168,10 @@ final class SessionStore: ObservableObject {
                 s.attentionNote = risk.isEmpty
                     ? "Permission: \(toolName)"
                     : "\(risk.level.label.uppercased()): \(risk.findings.first?.message ?? toolName)"
-                s.lastRisk = risk.level
+                if !risk.isEmpty {
+                    s.lastRisk = risk.level
+                    s.lastRiskAt = now
+                }
             }
             // Observe-only: the terminal owns the decision. Reply immediately
             // (empty stdout = no opinion) so the agent's own prompt shows with
@@ -337,6 +345,24 @@ final class SessionStore: ObservableObject {
         publish()
     }
 
+    /// Codex has no SessionEnd event. Once its rollout is no longer fresh the
+    /// row drops out of published UI immediately, while this longer retention
+    /// preserves metadata if the same thread resumes. Truly dormant entries
+    /// are then removed from the backing map.
+    @discardableResult
+    func expireInactiveCodex(now: Date = Date(),
+                             after ttl: TimeInterval = SessionStore.codexSessionTTL) -> Int {
+        let expired = map.values.filter {
+            $0.key.agent == .codex && !$0.isLive
+                && now.timeIntervalSince($0.lastActivity) >= ttl
+        }.map(\.key)
+        for key in expired {
+            PerchLog.info("Expiring inactive codex session \(key.id)", category: "store")
+            remove(agent: key.agent, id: key.id)
+        }
+        return expired.count
+    }
+
     // MARK: - Internals
 
     private func scheduleRemoval(of key: SessionKey, after seconds: TimeInterval = 30) {
@@ -350,7 +376,9 @@ final class SessionStore: ObservableObject {
     }
 
     private func publish() {
-        sessions = map.values.sorted { a, b in
+        sessions = map.values.filter {
+            !($0.key.agent == .codex && !$0.isLive)
+        }.sorted { a, b in
             if a.needsAttention != b.needsAttention { return a.needsAttention }
             let aExec = a.state == .executing, bExec = b.state == .executing
             if aExec != bExec { return aExec }

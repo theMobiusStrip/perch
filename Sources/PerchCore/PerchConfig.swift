@@ -25,6 +25,15 @@ public struct PerchConfig: Codable, Sendable {
     /// at least 1 so a value of 0/negative can never mark same-day worktrees
     /// removable.
     public var worktreeStaleDays: Int
+    /// Per-category notification preferences. Defaults preserve the behavior
+    /// from before preferences were exposed.
+    public var notifyDangerousCalls: Bool
+    public var notifyAttention: Bool
+    public var notifyTaskCompletion: Bool
+    public var notifyUsageThresholds: Bool
+    public var playNotificationSounds: Bool
+    /// Set once the user finishes or dismisses the guided monitoring setup.
+    public var hasCompletedSetup: Bool
     /// Extra keys we don't model yet — preserved verbatim.
     public var extra: [String: JSONValue]
 
@@ -35,6 +44,12 @@ public struct PerchConfig: Codable, Sendable {
         self.scratchDirs = []
         self.checkForUpdates = true
         self.worktreeStaleDays = PerchConfig.defaultWorktreeStaleDays
+        self.notifyDangerousCalls = true
+        self.notifyAttention = true
+        self.notifyTaskCompletion = true
+        self.notifyUsageThresholds = true
+        self.playNotificationSounds = true
+        self.hasCompletedSetup = false
         self.extra = [:]
     }
 
@@ -43,6 +58,12 @@ public struct PerchConfig: Codable, Sendable {
         case scratchDirs
         case checkForUpdates
         case worktreeStaleDays
+        case notifyDangerousCalls
+        case notifyAttention
+        case notifyTaskCompletion
+        case notifyUsageThresholds
+        case playNotificationSounds
+        case hasCompletedSetup
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +80,24 @@ public struct PerchConfig: Codable, Sendable {
         }
         if let v = raw["worktreeStaleDays"]?.int {
             config.worktreeStaleDays = max(1, v)
+        }
+        if let v = raw["notifyDangerousCalls"]?.boolValue {
+            config.notifyDangerousCalls = v
+        }
+        if let v = raw["notifyAttention"]?.boolValue {
+            config.notifyAttention = v
+        }
+        if let v = raw["notifyTaskCompletion"]?.boolValue {
+            config.notifyTaskCompletion = v
+        }
+        if let v = raw["notifyUsageThresholds"]?.boolValue {
+            config.notifyUsageThresholds = v
+        }
+        if let v = raw["playNotificationSounds"]?.boolValue {
+            config.playNotificationSounds = v
+        }
+        if let v = raw["hasCompletedSetup"]?.boolValue {
+            config.hasCompletedSetup = v
         }
         if let obj = raw.objectValue {
             let known = Set(KnownKeys.allCases.map(\.rawValue))
@@ -83,6 +122,12 @@ public struct PerchConfig: Codable, Sendable {
         if worktreeStaleDays != PerchConfig.defaultWorktreeStaleDays {
             obj["worktreeStaleDays"] = .number(Double(worktreeStaleDays))
         }
+        if !notifyDangerousCalls { obj["notifyDangerousCalls"] = .bool(false) }
+        if !notifyAttention { obj["notifyAttention"] = .bool(false) }
+        if !notifyTaskCompletion { obj["notifyTaskCompletion"] = .bool(false) }
+        if !notifyUsageThresholds { obj["notifyUsageThresholds"] = .bool(false) }
+        if !playNotificationSounds { obj["playNotificationSounds"] = .bool(false) }
+        if hasCompletedSetup { obj["hasCompletedSetup"] = .bool(true) }
         try JSONValue.object(obj).encode(to: encoder)
     }
 

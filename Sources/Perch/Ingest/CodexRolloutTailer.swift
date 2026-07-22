@@ -258,8 +258,13 @@ final class CodexRolloutTailer {
         let info = payload["info"] ?? .null
         store.upsert(agent: .codex, id: line.sessionID) { s in
             if let totals = info["total_token_usage"] {
-                if let v = totals["input_tokens"]?.int { s.inputTokens = v }
-                if let v = totals["cached_input_tokens"]?.int { s.cacheReadTokens = v }
+                let totalInput = totals["input_tokens"]?.int
+                let cachedInput = totals["cached_input_tokens"]?.int
+                if let v = totalInput {
+                    s.inputTokens = Self.uncachedInputTokens(
+                        totalInput: v, cachedInput: cachedInput ?? s.cacheReadTokens)
+                }
+                if let v = cachedInput { s.cacheReadTokens = v }
                 if let v = totals["output_tokens"]?.int { s.outputTokens = v }
             }
             if let window = info["model_context_window"]?.int { s.contextWindowSize = window }
@@ -269,6 +274,12 @@ final class CodexRolloutTailer {
             }
             if let ts { s.lastActivity = ts }
         }
+    }
+
+    /// Codex's cumulative input_tokens includes cached_input_tokens. Session
+    /// totals display the categories separately, so subtract the overlap.
+    static func uncachedInputTokens(totalInput: Int, cachedInput: Int) -> Int {
+        max(0, totalInput - cachedInput)
     }
 
     /// Sweep result from the engine: session id → file mtime fresh (<90s),
@@ -291,6 +302,7 @@ final class CodexRolloutTailer {
             turnInFlight.removeValue(forKey: id)
             store.setCodexLive(id: id, live: false)
         }
+        store.expireInactiveCodex()
     }
 
     // MARK: - Timestamps

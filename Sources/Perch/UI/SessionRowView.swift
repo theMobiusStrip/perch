@@ -57,16 +57,7 @@ struct SessionRowView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
-                    if session.lastRisk != .safe {
-                        Image(systemName: session.lastRisk == .danger
-                              ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(session.lastRisk == .danger
-                                             ? PerchTheme.danger : PerchTheme.caution)
-                            .help(session.lastRisk == .danger
-                                  ? "A dangerous tool call was flagged"
-                                  : "A tool call was flagged for review")
-                    }
+                    riskBadge
                     Spacer(minLength: 4)
                     StatePill(text: stateText, color: stateColor)
                 }
@@ -74,6 +65,20 @@ struct SessionRowView: View {
                 metadataLine
 
                 snippetLine
+            }
+        }
+    }
+
+    private var riskBadge: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            if let risk = session.visibleRisk(at: context.date) {
+                Image(systemName: risk == .danger
+                      ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(risk == .danger ? PerchTheme.danger : PerchTheme.caution)
+                    .help(risk == .danger
+                          ? "Dangerous tool call flagged in the last 5 minutes"
+                          : "Tool call flagged in the last 5 minutes")
             }
         }
     }
@@ -256,11 +261,15 @@ private struct TimelineEventRow: View {
 
     private var iconName: String {
         if event.isNote { return "arrow.triangle.2.circlepath" }
+        if event.risk == .danger { return "exclamationmark.octagon.fill" }
+        if event.risk == .caution { return "exclamationmark.triangle.fill" }
         if event.isError { return "exclamationmark.circle.fill" }
         return event.endedAt == nil ? "circle.dotted" : "checkmark.circle"
     }
 
     private var iconColor: Color {
+        if event.risk == .danger { return PerchTheme.danger }
+        if event.risk == .caution { return PerchTheme.caution }
         if event.isError { return PerchTheme.danger }
         if event.endedAt == nil { return PerchTheme.running }
         return Color.secondary

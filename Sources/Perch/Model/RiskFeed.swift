@@ -12,6 +12,11 @@ final class RiskFeed: ObservableObject {
     /// long been answered (or the tool has long run).
     static let entryTTL: TimeInterval = 300
 
+    /// Retained detection history backs the posture explanation. Dismissing a
+    /// transient card never erases this audit trail; it ages out with the
+    /// posture score after one hour.
+    static let recentWindow: TimeInterval = SecurityPosture.window
+
     /// Window in which an identical (session, tool, input) event is treated
     /// as a duplicate. PreToolUse and PermissionRequest both fire for the
     /// same call; one card is enough.
@@ -28,6 +33,7 @@ final class RiskFeed: ObservableObject {
     }
 
     @Published private(set) var entries: [Entry] = []
+    @Published private(set) var recent: [Entry] = []
     @Published private(set) var focusedIndex: Int = 0
 
     var onAdd: ((Entry) -> Void)?
@@ -46,22 +52,24 @@ final class RiskFeed: ObservableObject {
     /// though PreToolUse and PermissionRequest both fire for it.
     @discardableResult
     func add(key: SessionKey, toolName: String, toolInput: JSONValue,
-             cwd: String?, risk: RiskAssessment) -> Bool {
+             cwd: String?, risk: RiskAssessment, receivedAt: Date = Date()) -> Bool {
         guard !risk.isEmpty else { return false }
-        let now = Date()
-        if entries.contains(where: {
+        pruneRecent(now: receivedAt)
+        if recent.contains(where: {
             $0.key == key && $0.toolName == toolName && $0.toolInput == toolInput
-                && now.timeIntervalSince($0.receivedAt) < Self.dedupeWindow
+                && receivedAt.timeIntervalSince($0.receivedAt) < Self.dedupeWindow
         }) {
             return false
         }
         let entry = Entry(id: UUID(), key: key, toolName: toolName, toolInput: toolInput,
-                          cwd: cwd, receivedAt: now, risk: risk)
+                          cwd: cwd, receivedAt: receivedAt, risk: risk)
         entries.append(entry)
+        recent.append(entry)
         if entries.count == 1 { focusedIndex = 0 }
         PerchLog.info("Flagged \(risk.level.label) \(toolName) for \(key.agent.rawValue):\(key.id) (\(risk.findings.map(\.code).joined(separator: ",")))",
                       category: "detect")
         scheduleExpiry(for: entry.id)
+        scheduleRecentExpiry(for: entry.id)
         onAdd?(entry)
         return true
     }
@@ -95,6 +103,10 @@ final class RiskFeed: ObservableObject {
         focusedIndex = (focusedIndex - 1 + entries.count) % entries.count
     }
 
+    func pruneRecent(now: Date = Date()) {
+        recent.removeAll { now.timeIntervalSince($0.receivedAt) > Self.recentWindow }
+    }
+
     /// Wall-clock expiry (Task.sleep pauses across system sleep, so re-check
     /// the true age on fire and re-arm for the remainder).
     private func scheduleExpiry(for id: UUID) {
@@ -104,6 +116,21 @@ final class RiskFeed: ObservableObject {
                 let remaining = Self.entryTTL - Date().timeIntervalSince(entry.receivedAt)
                 if remaining <= 0 {
                     self.dismiss(id: id)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            }
+        }
+    }
+
+    private func scheduleRecentExpiry(for id: UUID) {
+        Task { [weak self] in
+            while true {
+                guard let self,
+                      let entry = self.recent.first(where: { $0.id == id }) else { return }
+                let remaining = Self.recentWindow - Date().timeIntervalSince(entry.receivedAt)
+                if remaining <= 0 {
+                    self.pruneRecent()
                     return
                 }
                 try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))

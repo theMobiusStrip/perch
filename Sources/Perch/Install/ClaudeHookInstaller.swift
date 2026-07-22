@@ -123,20 +123,39 @@ enum ClaudeHookInstaller {
 
     // MARK: - Status
 
-    static func status(settingsPath: URL = ClaudeHookInstaller.settingsPath) -> String {
+    static func installationStatus(
+        settingsPath: URL = ClaudeHookInstaller.settingsPath
+    ) -> HookInstallationStatus {
         guard FileManager.default.fileExists(atPath: settingsPath.path) else {
-            return "Claude: hooks not installed (no settings.json at \(settingsPath.path))"
+            return HookInstallationStatus(state: .missing, wiredEvents: 0,
+                                          totalEvents: allEvents.count,
+                                          summary: "Hooks not installed")
         }
         guard let file = try? InstallSupport.readObjectFile(at: settingsPath) else {
-            return "Claude: settings.json exists but cannot be parsed (\(settingsPath.path))"
+            return HookInstallationStatus(state: .unreadable, wiredEvents: 0,
+                                          totalEvents: allEvents.count,
+                                          summary: "settings.json cannot be read safely")
         }
         let wired = InstallSupport.wiredEventCount(root: file.object, events: allEvents)
-        let statusline: String
-        if let sl = file.object["statusLine"], !sl.isNull {
-            statusline = InstallSupport.isPerchEntry(sl) ? "Perch" : "user's (not chained)"
-        } else {
-            statusline = "none"
+        let statuslineReady = file.object["statusLine"].map(InstallSupport.isPerchEntry) == true
+        let ready = wired == allEvents.count && statuslineReady
+        let statusline = statuslineReady ? "status line connected" : "status line missing"
+        return HookInstallationStatus(
+            state: ready ? .ready : .partial,
+            wiredEvents: wired,
+            totalEvents: allEvents.count,
+            summary: "\(wired)/\(allEvents.count) hooks · \(statusline)")
+    }
+
+    static func status(settingsPath: URL = ClaudeHookInstaller.settingsPath) -> String {
+        let status = installationStatus(settingsPath: settingsPath)
+        switch status.state {
+        case .missing:
+            return "Claude: hooks not installed (no settings.json at \(settingsPath.path))"
+        case .unreadable:
+            return "Claude: settings.json exists but cannot be parsed (\(settingsPath.path))"
+        case .partial, .ready:
+            return "Claude: \(status.summary) — \(settingsPath.path)"
         }
-        return "Claude: hooks \(wired)/\(allEvents.count) events, statusLine \(statusline) — \(settingsPath.path)"
     }
 }
