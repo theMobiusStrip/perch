@@ -55,6 +55,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         riskFeed.$entries
             .sink { [weak self] _ in self?.updateBadge() }
             .store(in: &cancellables)
+        health.objectWillChange
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.updateBadge() }
+            }
+            .store(in: &cancellables)
         updateBadge()
     }
 
@@ -80,6 +85,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         } else {
             button.attributedTitle = NSAttributedString(string: "")
         }
+        let presentation = health.presentation
+        button.contentTintColor = Self.healthColor(presentation.state)
+        button.toolTip = "Perch — \(presentation.title): \(presentation.summary)"
     }
 
     // MARK: - NSMenuDelegate (rebuild on open)
@@ -92,7 +100,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         health.refresh()
 
         // Monitoring coverage is separate from recent risk activity.
-        menu.addItem(infoItem("\(health.snapshot.title) — \(health.snapshot.summary)"))
+        let healthPresentation = health.presentation
+        menu.addItem(infoItem("\(healthPresentation.title) — \(healthPresentation.summary)"))
         menu.addItem(infoItem("Security \(posture.score)/100 — \(posture.grade.rawValue)",
                               monospacedDigits: true))
         menu.addItem(.separator())
@@ -222,6 +231,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .idle: return .systemGray
         case .ended: return .tertiaryLabelColor
         case .unknown: return .quaternaryLabelColor
+        }
+    }
+
+    private static func healthColor(_ state: MonitoringCheckState) -> NSColor? {
+        switch state {
+        case .checking: return .secondaryLabelColor
+        case .ready: return .systemGreen
+        case .needsAttention: return .systemOrange
+        case .unavailable: return .systemRed
         }
     }
 

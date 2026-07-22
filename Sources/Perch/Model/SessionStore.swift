@@ -18,8 +18,9 @@ final class SessionStore: ObservableObject {
     var onAttention: ((Session, String) -> Void)?
     var onTaskComplete: ((Session, String?) -> Void)?
     /// Fired when the detector flags a danger-level tool call — OS
-    /// notification + notch attention. (session, toolName, risk)
-    var onRiskDetected: ((Session, String, RiskAssessment) -> Void)?
+    /// notification + notch attention. The retained entry gives notification
+    /// clicks an exact read-only destination.
+    var onRiskDetected: ((Session, RiskFeed.Entry) -> Void)?
 
     private var map: [SessionKey: Session] = [:]
 
@@ -265,15 +266,22 @@ final class SessionStore: ObservableObject {
         // PreToolUse and PermissionRequest both fire for the same call; the
         // feed's dedupe decides what counts as a new event, so the score and
         // the notification tally each real call exactly once.
-        let isNewEvent = riskFeed?.add(key: key,
-                                       toolName: toolName,
-                                       toolInput: toolInput ?? .null,
-                                       cwd: cwd ?? find(agent: agent, id: sid)?.cwd,
-                                       risk: risk) ?? true
-        guard isNewEvent else { return }
+        let resolvedInput = toolInput ?? .null
+        let resolvedCwd = cwd ?? find(agent: agent, id: sid)?.cwd
+        let entry: RiskFeed.Entry
+        if let riskFeed {
+            guard let added = riskFeed.addEntry(key: key, toolName: toolName,
+                                                toolInput: resolvedInput, cwd: resolvedCwd,
+                                                risk: risk) else { return }
+            entry = added
+        } else {
+            entry = RiskFeed.Entry(id: UUID(), key: key, toolName: toolName,
+                                   toolInput: resolvedInput, cwd: resolvedCwd,
+                                   receivedAt: Date(), risk: risk)
+        }
         securityPosture?.record(risk.level)
         if risk.level == .danger, let session = find(agent: agent, id: sid) {
-            onRiskDetected?(session, toolName, risk)
+            onRiskDetected?(session, entry)
         }
     }
 

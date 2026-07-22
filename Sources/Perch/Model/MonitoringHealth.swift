@@ -61,7 +61,7 @@ struct MonitoringSnapshot: Sendable {
     var title: String {
         switch state {
         case .checking: return "Checking monitoring"
-        case .ready: return "Monitoring active"
+        case .ready: return "Monitoring configured"
         case .needsAttention: return "Setup needed"
         case .unavailable: return "Monitoring offline"
         }
@@ -78,6 +78,23 @@ struct MonitoringSnapshot: Sendable {
     }
 
     var hasConfiguredAgent: Bool { claude.isReady || codex.isReady }
+
+    func check(for agent: AgentKind) -> MonitoringCheck {
+        switch agent {
+        case .claude: return claude
+        case .codex: return codex
+        }
+    }
+
+    var configuredAgents: [AgentKind] {
+        AgentKind.allCases.filter { check(for: $0).isReady }
+    }
+}
+
+struct MonitoringPresentation: Sendable {
+    let state: MonitoringCheckState
+    let title: String
+    let summary: String
 }
 
 enum MonitoringInspector {
@@ -128,9 +145,50 @@ enum MonitoringInspector {
 final class MonitoringHealth: ObservableObject {
     @Published private(set) var snapshot: MonitoringSnapshot = .checking
     @Published private(set) var notificationState: NotificationAuthorizationState = .unknown
-    @Published private(set) var lastEventAt: Date?
+    @Published private(set) var lastClaudeEventAt: Date?
+    @Published private(set) var lastCodexEventAt: Date?
     @Published private(set) var isRefreshing = false
     private var runtimeCheck = MonitoringSnapshot.checking.socket
+    private var lastPersistedClaudeEventAt: Date?
+    private var lastPersistedCodexEventAt: Date?
+
+    /// Hook events can be frequent; persist the first observation immediately,
+    /// then at most once per minute per integration.
+    private static let persistenceInterval: TimeInterval = 60
+
+    init(config: PerchConfig = .load()) {
+        lastClaudeEventAt = config.lastClaudeHookEventAt
+        lastCodexEventAt = config.lastCodexHookEventAt
+        lastPersistedClaudeEventAt = config.lastClaudeHookEventAt
+        lastPersistedCodexEventAt = config.lastCodexHookEventAt
+    }
+
+    var presentation: MonitoringPresentation {
+        let baseState = snapshot.state
+        guard baseState == .ready else {
+            return MonitoringPresentation(state: baseState, title: snapshot.title,
+                                          summary: snapshot.summary)
+        }
+
+        let unverified = snapshot.configuredAgents.filter { lastEventAt(for: $0) == nil }
+        guard unverified.isEmpty else {
+            let names = unverified.map(Self.agentName).joined(separator: " and ")
+            let summary = unverified.count == snapshot.configuredAgents.count
+                ? "Start or restart \(names) to verify event delivery"
+                : "\(names) still awaiting a hook event"
+            return MonitoringPresentation(state: .needsAttention,
+                                          title: "Verification needed", summary: summary)
+        }
+
+        let names = snapshot.configuredAgents.map(Self.agentName)
+        let covered = names.count == 2 ? names.joined(separator: " and ") : names[0]
+        return MonitoringPresentation(state: .ready, title: "Monitoring verified",
+                                      summary: "\(covered) event delivery verified")
+    }
+
+    var lastEventAt: Date? {
+        [lastClaudeEventAt, lastCodexEventAt].compactMap { $0 }.max()
+    }
 
     func refresh() {
         guard !isRefreshing else { return }
@@ -146,8 +204,53 @@ final class MonitoringHealth: ObservableObject {
         }
     }
 
-    func noteEvent(at date: Date = Date()) {
-        lastEventAt = date
+    func noteEvent(agent: AgentKind, at date: Date = Date()) {
+        switch agent {
+        case .claude: lastClaudeEventAt = date
+        case .codex: lastCodexEventAt = date
+        }
+
+        let persisted = persistedEventAt(for: agent)
+        if persisted.map({ date.timeIntervalSince($0) >= Self.persistenceInterval }) ?? true {
+            persistVerification()
+        }
+    }
+
+    func lastEventAt(for agent: AgentKind) -> Date? {
+        switch agent {
+        case .claude: return lastClaudeEventAt
+        case .codex: return lastCodexEventAt
+        }
+    }
+
+    func verificationState(for agent: AgentKind) -> MonitoringCheckState {
+        let check = snapshot.check(for: agent)
+        guard check.isReady else { return check.state }
+        return lastEventAt(for: agent) == nil ? .needsAttention : .ready
+    }
+
+    /// Installing, repairing, or removing hooks invalidates an older delivery
+    /// proof. The next real event must verify the newly configured path.
+    func clearVerification(for agent: AgentKind) {
+        switch agent {
+        case .claude: lastClaudeEventAt = nil
+        case .codex: lastCodexEventAt = nil
+        }
+        persistVerification()
+    }
+
+    func persistVerification() {
+        var config = PerchConfig.load()
+        config.lastClaudeHookEventAt = lastClaudeEventAt
+        config.lastCodexHookEventAt = lastCodexEventAt
+        do {
+            try config.save()
+            lastPersistedClaudeEventAt = lastClaudeEventAt
+            lastPersistedCodexEventAt = lastCodexEventAt
+        } catch {
+            PerchLog.warn("Could not save monitoring verification: \(error.localizedDescription)",
+                          category: "config")
+        }
     }
 
     func updateRuntime(isRunning: Bool, error: String? = nil) {
@@ -166,5 +269,22 @@ final class MonitoringHealth: ObservableObject {
     func injectSnapshot(_ snapshot: MonitoringSnapshot) {
         self.snapshot = snapshot
         isRefreshing = false
+    }
+
+    /// Deterministic seam for selftests and static showcase rendering.
+    func injectVerification(claude: Date?, codex: Date?) {
+        lastClaudeEventAt = claude
+        lastCodexEventAt = codex
+    }
+
+    private func persistedEventAt(for agent: AgentKind) -> Date? {
+        switch agent {
+        case .claude: return lastPersistedClaudeEventAt
+        case .codex: return lastPersistedCodexEventAt
+        }
+    }
+
+    private static func agentName(_ agent: AgentKind) -> String {
+        agent == .claude ? "Claude Code" : "Codex"
     }
 }

@@ -5,6 +5,7 @@ import PerchCore
 /// the most recent tool events, described in plain language.
 struct SessionRowView: View {
     let session: Session
+    var isNotificationTarget = false
 
     @State private var expanded = false
 
@@ -26,9 +27,7 @@ struct SessionRowView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(session.needsAttention
-                              ? PerchTheme.attention.opacity(0.45)
-                              : PerchTheme.cardBorder, lineWidth: 1)
+                .strokeBorder(borderColor, lineWidth: isNotificationTarget ? 2 : 1)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -160,6 +159,13 @@ struct SessionRowView: View {
     }
 
     // MARK: - State presentation
+
+    private var borderColor: Color {
+        if isNotificationTarget { return PerchTheme.running.opacity(0.85) }
+        return session.needsAttention
+            ? PerchTheme.attention.opacity(0.45)
+            : PerchTheme.cardBorder
+    }
 
     private var stateColor: Color {
         PerchTheme.stateColor(session.state)

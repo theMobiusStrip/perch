@@ -94,7 +94,7 @@ struct NotchRootView: View {
             if state.hasNotch {
                 Spacer(minLength: 0)  // push the visible band below the cutout
             }
-            PillView(sessions: sessions, hasAttention: state.hasAttention)
+            PillView(sessions: sessions, health: health, hasAttention: state.hasAttention)
                 .frame(height: state.hasNotch ? NotchGeometry.pillBandHeight : state.pillSize.height)
         }
         .frame(width: state.pillSize.width, height: state.pillSize.height)
@@ -218,18 +218,37 @@ struct NotchRootView: View {
         } else if renderStatic {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(sessions.sessions) { session in
-                    SessionRowView(session: session)
+                    sessionRow(session)
                 }
                 Spacer(minLength: 0)
             }
         } else {
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(sessions.sessions) { session in
-                        SessionRowView(session: session)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(sessions.sessions) { session in
+                            sessionRow(session)
+                                .id(session.key)
+                        }
                     }
                 }
+                .onAppear { scrollToFocusedSession(using: proxy) }
+                .onChange(of: state.sessionFocusRequest) { _, _ in
+                    scrollToFocusedSession(using: proxy)
+                }
             }
+        }
+    }
+
+    private func sessionRow(_ session: Session) -> some View {
+        SessionRowView(session: session,
+                       isNotificationTarget: state.focusedSessionKey == session.key)
+    }
+
+    private func scrollToFocusedSession(using proxy: ScrollViewProxy) {
+        guard let key = state.focusedSessionKey else { return }
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(key, anchor: .center) }
         }
     }
 }

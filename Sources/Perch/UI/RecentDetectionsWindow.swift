@@ -3,9 +3,22 @@ import SwiftUI
 import PerchCore
 
 @MainActor
+private final class RecentDetectionSelection: ObservableObject {
+    @Published var focusID: UUID?
+    @Published private(set) var focusRequest = 0
+
+    func requestFocus(_ id: UUID?) {
+        focusID = id
+        focusRequest += 1
+    }
+}
+
+@MainActor
 final class RecentDetectionsWindowController: NSWindowController {
+    private let selection = RecentDetectionSelection()
+
     init(feed: RiskFeed, posture: SecurityPosture) {
-        let root = RecentDetectionsView(feed: feed, posture: posture)
+        let root = RecentDetectionsView(feed: feed, posture: posture, selection: selection)
         let hosting = NSHostingController(rootView: root)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
@@ -20,7 +33,8 @@ final class RecentDetectionsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { nil }
 
-    func show() {
+    func show(focusing id: UUID? = nil) {
+        selection.requestFocus(id)
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
@@ -30,6 +44,7 @@ final class RecentDetectionsWindowController: NSWindowController {
 private struct RecentDetectionsView: View {
     @ObservedObject var feed: RiskFeed
     @ObservedObject var posture: SecurityPosture
+    @ObservedObject var selection: RecentDetectionSelection
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,13 +53,20 @@ private struct RecentDetectionsView: View {
             if feed.recent.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(feed.recent.reversed())) { entry in
-                            detectionRow(entry)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(feed.recent.reversed())) { entry in
+                                detectionRow(entry)
+                                    .id(entry.id)
+                            }
                         }
+                        .padding(18)
                     }
-                    .padding(18)
+                    .onAppear { scrollToFocused(using: proxy) }
+                    .onChange(of: selection.focusRequest) { _, _ in
+                        scrollToFocused(using: proxy)
+                    }
                 }
             }
         }
@@ -135,7 +157,9 @@ private struct RecentDetectionsView: View {
         }
         .padding(13)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.045)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(color.opacity(0.20)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(
+            targetEntryID == entry.id ? color.opacity(0.85) : color.opacity(0.20),
+            lineWidth: targetEntryID == entry.id ? 2 : 1))
     }
 
     private func metadata(for entry: RiskFeed.Entry) -> String {
@@ -149,6 +173,17 @@ private struct RecentDetectionsView: View {
         case .ok: return .green
         case .elevated: return .orange
         case .high: return .red
+        }
+    }
+
+    private var targetEntryID: UUID? {
+        selection.focusID
+    }
+
+    private func scrollToFocused(using proxy: ScrollViewProxy) {
+        guard let id = targetEntryID else { return }
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(id, anchor: .center) }
         }
     }
 }

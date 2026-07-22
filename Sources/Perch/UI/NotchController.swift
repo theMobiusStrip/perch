@@ -12,6 +12,8 @@ enum NotchPage { case sessions, integrity }
 final class NotchViewState: ObservableObject {
     @Published var isExpanded = false
     @Published var page: NotchPage = .sessions
+    @Published var focusedSessionKey: SessionKey?
+    @Published var sessionFocusRequest = 0
     @Published var hasAttention = false
     @Published var hasNotch = false
     @Published var pillSize = NotchGeometry.fallbackPillSize
@@ -97,8 +99,13 @@ final class NotchController {
         if state.isExpanded { collapse() } else { expand() }
     }
 
-    func expand() {
+    func expand(focusing sessionKey: SessionKey? = nil) {
         guard panel != nil else { return }
+        if let sessionKey {
+            state.page = .sessions
+            state.focusedSessionKey = sessionKey
+            state.sessionFocusRequest += 1
+        }
         cancelScheduledCollapse()
         cancelScheduledHoverExpand()
         if !state.isExpanded {
