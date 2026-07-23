@@ -216,7 +216,7 @@ enum ShowcaseRenderer {
                                  riskFeed: riskFeed, posture: posture, health: health,
                                  usageHistory: usageHistory, integrity: integrity,
                                  worktrees: worktrees, openWorktrees: {},
-                                 openUsageHistory: {}, openSetup: {},
+                                 openUsageHistory: {}, openInsights: {}, openSetup: {},
                                  openRecentDetections: {}, renderStatic: true)
             .frame(width: state.expandedSize.width, height: state.expandedSize.height)
             // ImageRenderer otherwise lets the shell negotiate up to the

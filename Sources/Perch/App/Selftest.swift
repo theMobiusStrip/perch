@@ -54,6 +54,8 @@ enum Selftest {
         detectionStoreTransactionAndDedupe(t)
         detectionStoreRetentionAndPostureRestore(t)
         detectionStoreFailureAndPermissions(t)
+        detectionInsightsAggregatesAndBounds(t)
+        detectionInsightsCalendarBuckets(t)
         sessionStorePersistsOnlyAcceptedMetadata(t)
         monitoringSnapshotSeparatesCoverageFromPosture(t)
         monitoringHealthSeparatesConfigurationFromVerification(t)
@@ -2382,6 +2384,16 @@ private extension Selftest {
                       String(DetectionStore.schemaVersion), "schemaVersion")
         t.expectEqual(sqliteColumnNames(databaseURL, "SELECT * FROM detection_export_v1 LIMIT 0"),
                       DetectionStore.exportColumns, "exactExportColumns")
+        t.expectEqual(
+            sqliteRows(databaseURL, "PRAGMA table_info(detection_events)")?
+                .compactMap { $0[safe: 1] ?? nil },
+            DetectionStore.eventColumns,
+            "exactEventColumns")
+        t.expectEqual(
+            sqliteRows(databaseURL, "PRAGMA table_info(detection_findings)")?
+                .compactMap { $0[safe: 1] ?? nil },
+            DetectionStore.findingColumns,
+            "exactFindingColumns")
         store.close()
 
         let reopened = detectionStore(at: databaseURL)
@@ -2586,6 +2598,223 @@ private extension Selftest {
     }
 
     @MainActor
+    static func detectionInsightsAggregatesAndBounds(_ t: Checker) {
+        t.suite("DetectionInsights.aggregatesAndBounds")
+        let root = detectionTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("perch/detections.sqlite3")
+        let store = detectionStore(at: databaseURL)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let now = calendar.date(from: DateComponents(
+            year: 2026, month: 7, day: 23, hour: 12))!
+        guard (try? store.startSynchronously(now: now)) != nil else {
+            t.expectTrue(false, "open")
+            return
+        }
+
+        let lowerBound = now.addingTimeInterval(-24 * 60 * 60)
+        let records = [
+            detectionRecord(
+                id: "lower-bound",
+                at: lowerBound,
+                toolUseID: "lower-bound",
+                risk: .caution,
+                agent: .claude,
+                sessionID: "shared-session",
+                toolName: "Bash",
+                findings: [
+                    DetectionFindingRecord(code: "destructive-delete", level: .caution),
+                ]),
+            detectionRecord(
+                id: "multi-finding",
+                at: now.addingTimeInterval(-2 * 60 * 60),
+                toolUseID: "multi-finding",
+                agent: .claude,
+                sessionID: "shared-session",
+                toolName: "Bash",
+                findings: [
+                    DetectionFindingRecord(code: "destructive-delete", level: .danger),
+                    DetectionFindingRecord(code: "privilege-escalation", level: .danger),
+                ]),
+            detectionRecord(
+                id: "same-raw-session-other-agent",
+                at: now.addingTimeInterval(-60 * 60),
+                toolUseID: "other-agent",
+                agent: .codex,
+                sessionID: "shared-session",
+                toolName: "shell",
+                findings: [
+                    DetectionFindingRecord(code: "privilege-escalation", level: .danger),
+                ]),
+            detectionRecord(
+                id: "upper-bound",
+                at: now,
+                toolUseID: "upper-bound",
+                risk: .caution,
+                agent: .claude,
+                sessionID: "edge-session",
+                toolName: "Write",
+                findings: [
+                    DetectionFindingRecord(code: "memory-pollution", level: .caution),
+                ]),
+            detectionRecord(
+                id: "older-calendar-day",
+                at: now.addingTimeInterval(-3 * 24 * 60 * 60),
+                toolUseID: "older",
+                risk: .caution,
+                agent: .codex,
+                sessionID: "older-session",
+                toolName: "WebFetch",
+                findings: [
+                    DetectionFindingRecord(code: "raw-ip", level: .caution),
+                ]),
+            detectionRecord(
+                id: "before-lower-bound",
+                at: lowerBound.addingTimeInterval(-1),
+                toolUseID: "before",
+                agent: .claude,
+                sessionID: "outside-session",
+                toolName: "Bash"),
+            detectionRecord(
+                id: "future",
+                at: now.addingTimeInterval(1),
+                toolUseID: "future",
+                agent: .claude,
+                sessionID: "outside-session",
+                toolName: "Bash"),
+        ]
+        for record in records {
+            t.expectEqual(try? store.insertSynchronously(record), true,
+                          "insert.\(record.eventID)")
+        }
+
+        guard let day = try? store.loadInsightsSynchronously(
+            range: .hours24,
+            now: now,
+            calendar: calendar) else {
+            t.expectTrue(false, "load24H")
+            store.close()
+            return
+        }
+        t.expectEqual(day.timeline.count, 24, "twentyFourHourlyBuckets")
+        t.expectEqual(day.startAt, lowerBound, "rollingLowerBound")
+        t.expectEqual(day.endAt, now, "inclusiveUpperBound")
+        t.expectEqual(day.cautionCount, 2, "cautionEventsCountOnce")
+        t.expectEqual(day.dangerCount, 2, "dangerEventsCountOnce")
+        t.expectEqual(day.detectionCount, 4, "multiFindingEventNotDuplicated")
+        t.expectEqual(day.timeline.reduce(0) { $0 + $1.totalCount }, 4,
+                      "timelineMatchesDetectionTotal")
+        t.expectEqual(day.timeline.first?.cautionCount, 1,
+                      "lowerBoundFallsInFirstBucket")
+        t.expectEqual(day.timeline.last?.cautionCount, 1,
+                      "upperBoundFallsInFinalBucket")
+        t.expectEqual(day.findings, [
+            DetectionFindingAggregate(
+                code: "privilege-escalation", level: .danger, count: 2),
+            DetectionFindingAggregate(
+                code: "destructive-delete", level: .danger, count: 1),
+            DetectionFindingAggregate(
+                code: "destructive-delete", level: .caution, count: 1),
+            DetectionFindingAggregate(
+                code: "memory-pollution", level: .caution, count: 1),
+        ], "findingCodeAndLevelAreSeparate")
+        t.expectEqual(day.agents.map { "\($0.agent.rawValue):\($0.detectionCount)" },
+                      ["claude:3", "codex:1"], "agentTotals")
+        t.expectEqual(day.tools.map { "\($0.toolName):\($0.detectionCount)" },
+                      ["Bash:2", "shell:1", "Write:1"], "toolTotals")
+        t.expectEqual(day.sessions.count, 3, "agentScopesRawSessionID")
+        t.expectEqual(
+            day.sessions.first {
+                $0.agent == .claude && $0.sessionID == "shared-session"
+            }?.detectionCount,
+            2,
+            "sessionClustersDetections")
+        t.expectFalse(day.sessions.contains { $0.sessionID == "outside-session" },
+                      "outOfRangeSessionsExcluded")
+
+        let week = try? store.loadInsightsSynchronously(
+            range: .days7,
+            now: now,
+            calendar: calendar)
+        t.expectEqual(week?.timeline.count, 7, "sevenCalendarBuckets")
+        t.expectEqual(week?.detectionCount, 6, "weekIncludesEarlierEvents")
+        t.expectEqual(week?.timeline.reduce(0) { $0 + $1.totalCount }, 6,
+                      "weekTimelineMatchesTotal")
+
+        let month = try? store.loadInsightsSynchronously(
+            range: .days30,
+            now: now,
+            calendar: calendar)
+        t.expectEqual(month?.timeline.count, 30, "thirtyCalendarBuckets")
+        t.expectEqual(month?.detectionCount, 6, "monthExcludesFutureEvent")
+        store.close()
+    }
+
+    @MainActor
+    static func detectionInsightsCalendarBuckets(_ t: Checker) {
+        t.suite("DetectionInsights.calendarBuckets")
+        guard let losAngeles = TimeZone(identifier: "America/Los_Angeles"),
+              let utc = TimeZone(identifier: "UTC") else {
+            t.expectTrue(false, "timeZonesAvailable")
+            return
+        }
+
+        var laCalendar = Calendar(identifier: .gregorian)
+        laCalendar.locale = Locale(identifier: "en_US_POSIX")
+        laCalendar.timeZone = losAngeles
+
+        let springNow = laCalendar.date(from: DateComponents(
+            year: 2024, month: 3, day: 11, hour: 12))!
+        let spring = InsightsRange.days7.bucketDefinitions(
+            now: springNow,
+            calendar: laCalendar)
+        let springTransition = spring.first { $0.label == "Mar 10" }
+        t.expectEqual(spring.count, 7, "springHasSevenCalendarDays")
+        t.expectEqual(springTransition.map { $0.end.timeIntervalSince($0.start) } ?? -1,
+                      23 * 60 * 60,
+                      accuracy: 0.1,
+                      "springForwardDayIs23Hours")
+
+        let fallNow = laCalendar.date(from: DateComponents(
+            year: 2024, month: 11, day: 3, hour: 12, minute: 30))!
+        let fallHours = InsightsRange.hours24.bucketDefinitions(
+            now: fallNow,
+            calendar: laCalendar)
+        let repeatedOneAM = fallHours.map(\.label).filter {
+            $0.hasPrefix("1 AM ")
+        }
+        t.expectEqual(fallHours.count, 24, "fallHasTwentyFourElapsedHours")
+        t.expectEqual(repeatedOneAM.count, 2, "repeatedHourLabelsIncludeZone")
+        t.expectEqual(Set(repeatedOneAM).count, 2, "repeatedHourLabelsAreDistinct")
+
+        let fallDays = InsightsRange.days7.bucketDefinitions(
+            now: laCalendar.date(from: DateComponents(
+                year: 2024, month: 11, day: 4, hour: 12))!,
+            calendar: laCalendar)
+        let fallTransition = fallDays.first { $0.label == "Nov 3" }
+        t.expectEqual(fallTransition.map { $0.end.timeIntervalSince($0.start) } ?? -1,
+                      25 * 60 * 60,
+                      accuracy: 0.1,
+                      "fallBackDayIs25Hours")
+
+        var utcCalendar = laCalendar
+        utcCalendar.timeZone = utc
+        let laSnapshot = DetectionInsightsSnapshot.aggregate(
+            rows: [], range: .days7, now: springNow, calendar: laCalendar)
+        let utcSnapshot = DetectionInsightsSnapshot.aggregate(
+            rows: [], range: .days7, now: springNow, calendar: utcCalendar)
+        t.expectEqual(laSnapshot.timeZoneIdentifier, losAngeles.identifier,
+                      "snapshotCapturesLocalZone")
+        t.expectEqual(utcSnapshot.timeZoneIdentifier, utc.identifier,
+                      "refreshCapturesChangedZone")
+        t.expectTrue(laSnapshot.startAt != utcSnapshot.startAt,
+                     "changedZoneRecomputesCalendarBounds")
+    }
+
+    @MainActor
     static func sessionStorePersistsOnlyAcceptedMetadata(_ t: Checker) {
         t.suite("SessionStore.persistsOnlyAcceptedMetadata")
         let root = detectionTempRoot()
@@ -2715,6 +2944,9 @@ private extension Selftest {
         at: Date,
         toolUseID: String?,
         risk: RiskLevel = .danger,
+        agent: AgentKind = .claude,
+        sessionID: String = "session-1",
+        toolName: String = "Bash",
         findings: [DetectionFindingRecord] = [
             DetectionFindingRecord(code: "destructive-delete", level: .danger),
         ]
@@ -2726,10 +2958,10 @@ private extension Selftest {
             endpointUser: "test-user",
             endpointHost: "test-host",
             producerVersion: "v-test",
-            agent: .claude,
-            sessionID: "session-1",
+            agent: agent,
+            sessionID: sessionID,
             toolUseID: toolUseID,
-            toolName: "Bash",
+            toolName: toolName,
             riskLevel: risk,
             findings: findings)
     }

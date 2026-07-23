@@ -19,6 +19,7 @@ struct NotchRootView: View {
     @ObservedObject var worktrees: WorktreeModel
     let openWorktrees: () -> Void
     let openUsageHistory: () -> Void
+    let openInsights: () -> Void
     let openSetup: () -> Void
     let openRecentDetections: () -> Void
     /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
@@ -138,6 +139,12 @@ struct NotchRootView: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(height: 1)
                 .padding(.bottom, 2)
+            Button(action: openInsights) {
+                NotchGlanceRow(icon: "chart.bar.xaxis", tint: PerchTheme.attention,
+                               label: "Insights", summary: "24h · 7d · 30d")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open Insights")
             WorktreeGlanceRow(model: worktrees, onOpen: openWorktrees)
             UsageOverviewRow(history: usageHistory, onOpen: openUsageHistory)
             UsageGaugeStrip(usage: usage, claudeDataMissing: claudeGaugesMissing)

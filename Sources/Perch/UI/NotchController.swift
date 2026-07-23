@@ -36,6 +36,7 @@ final class NotchController {
     private let worktrees: WorktreeModel
     private let openWorktrees: () -> Void
     private let openUsageHistory: () -> Void
+    private let openInsights: () -> Void
     private let openSetup: () -> Void
     private let openRecentDetections: () -> Void
 
@@ -58,6 +59,7 @@ final class NotchController {
          integrity: IntegrityModel, worktrees: WorktreeModel,
          openWorktrees: @escaping () -> Void,
          openUsageHistory: @escaping () -> Void,
+         openInsights: @escaping () -> Void,
          openSetup: @escaping () -> Void,
          openRecentDetections: @escaping () -> Void) {
         self.sessions = sessions
@@ -70,6 +72,7 @@ final class NotchController {
         self.worktrees = worktrees
         self.openWorktrees = openWorktrees
         self.openUsageHistory = openUsageHistory
+        self.openInsights = openInsights
         self.openSetup = openSetup
         self.openRecentDetections = openRecentDetections
         state.controller = self
@@ -204,6 +207,7 @@ final class NotchController {
                                  usageHistory: usageHistory, integrity: integrity,
                                  worktrees: worktrees, openWorktrees: openWorktrees,
                                  openUsageHistory: openUsageHistory,
+                                 openInsights: openInsights,
                                  openSetup: openSetup,
                                  openRecentDetections: openRecentDetections)
         let hosting = NotchHostingView(rootView: root)
