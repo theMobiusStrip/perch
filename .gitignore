@@ -5,6 +5,7 @@ dist/
 .swiftpm/
 PLAN.md
 MEMORY.md
+plans/
 .claude/
 .fuzz-progress
 fuzz-crashes/

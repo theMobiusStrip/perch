@@ -61,7 +61,7 @@ and what they've **left behind**:
 | 🐦 **Every session at a glance** | Live list of all Claude Code and Codex sessions — running / waiting / idle, last message, context gauge, red badge on any session that just ran something dangerous. |
 | 🎫 **Token usage** | Today / 7-day / 30-day totals in the notch, rate-limit gauges with reset countdowns, and a full per-day / per-model / per-project dashboard (menu bar → **Token Usage…**). |
 | 🌳 **Worktree housekeeping** | A read-only cross-project audit of the git worktrees agent sessions leave behind — classified `reclaimable` (clean, merged, stale), `review` (dirty or ahead of the default branch), `active` (a live session or recently touched), or `orphaned` — with disk sizes and a *Copy cleanup commands* button (menu bar → **Worktrees…**). Perch scores and reports; it never deletes. |
-| 🪶 **Zero footprint** | No dependencies, no telemetry, and an auditable all-Swift codebase. If Perch dies, your agents don't even notice. |
+| 🪶 **Zero footprint** | No third-party dependencies or telemetry, and an auditable all-Swift codebase using macOS's system SQLite for minimal local detection metadata. If Perch dies, your agents don't even notice. |
 
 <details>
 <summary><b>🧭 Footholds · 🌳 Worktrees · 📊 token dashboard screenshots</b></summary>
@@ -228,7 +228,8 @@ Option 2 — it's two commands.
 Claude Code / Codex ──hooks──▶ perch-bridge ──unix socket──▶ Perch.app
      (your terminal)            (fire & forget,               ├─ risk scoring
       keeps all decisions        ~10 ms, exits)               ├─ notch card + notification
-                                                              └─ sessions / tokens / score
+                                                              ├─ sessions / tokens / score
+                                                              └─ minimal local SQLite record
 ```
 
 Hooks invoke the bundled `perch-bridge`, which forwards each event over a
@@ -237,6 +238,14 @@ and `PermissionRequest` events are risk-scored the instant they arrive;
 danger raises an OS notification and a notch card. In parallel, Perch tails
 transcript/rollout files and validates liveness against `~/.claude/sessions`
 pid files, so sessions started before Perch launched are covered too.
+
+Accepted caution/danger detections also write compact metadata to
+`~/Library/Application Support/Perch/detections.sqlite3` after the hook reply
+and live-feed deduplication. The database retains 30 days and restores only the
+past hour's posture after restart. It never stores commands, tool payloads,
+paths, prompts, finding prose, decisions, or outcomes. The versioned,
+read-only consumer contract is documented in
+[Detection storage](docs/detection-storage.md).
 
 One caveat: Claude's rate-limit gauges are fed by the statusline payload,
 which only terminal `claude` sessions render — the Claude desktop app never
@@ -257,17 +266,23 @@ be audited, not trusted**:
   fire-and-forget ~10 ms, and if Perch is wedged the hook gives up on its
   own after 5 s — the agent always proceeds.
 - **100% local detection, zero telemetry.** No analytics, no cloud detection
-  service — nothing Perch observes ever leaves your machine. The one network
+  service — nothing Perch observes ever leaves your machine. Accepted
+  caution/danger detections retain only minimal metadata in local SQLite for
+  30 days; there is no uploader. The one network
   call in the codebase is the optional update check: an unauthenticated GET
   to the GitHub releases API, on by default, toggleable from the menu bar
   (**Check Automatically**), and zero network when off. Verify it yourself:
   `grep -rn "URLSession\|NWConnection" Sources/` matches only
   [`UpdateChecker.swift`](Sources/Perch/Model/UpdateChecker.swift).
-- **The detector can't leak what it inspects.** Risk scoring is pure string
-  matching in-process; flagged commands are shown to you and written to your
-  local log, never sent anywhere.
-- **No dependencies.** AppKit/SwiftUI/Foundation only. The supply-chain
-  surface is this repo — read it top to bottom.
+- **The detector doesn't persist what it inspects.** Risk scoring is pure
+  string matching in-process. Commands and tool payloads may appear in the
+  live card, but SQLite stores only event/endpoint/tool identifiers, Perch
+  version, risk level, and stable finding codes. No commands, paths, prompts,
+  content, decisions, or outcomes are stored. See
+  [Detection storage](docs/detection-storage.md).
+- **No third-party dependencies.** AppKit/SwiftUI/Foundation plus the SQLite
+  library shipped with macOS. The supply-chain surface is this repo and the
+  operating system — read the app top to bottom.
 - **Config writes are surgical and reversible.** Installing hooks
   parse-merges your `~/.claude/settings.json` / `~/.codex/hooks.json`
   (your keys and hooks preserved), writes a timestamped backup, and replaces
