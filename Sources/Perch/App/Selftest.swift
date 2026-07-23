@@ -49,6 +49,7 @@ enum Selftest {
         riskFeedDedupesSameCall(t)
         riskFeedDismissAndFocusClamp(t)
         riskFeedRetainsRecentDetections(t)
+        detectionIdentityHostNameIsNonempty(t)
         detectionStoreSchemaAndReopen(t)
         detectionStoreTransactionAndDedupe(t)
         detectionStoreRetentionAndPostureRestore(t)
@@ -2356,6 +2357,12 @@ private func codexTrustEventNamesAndConfigScan(_ t: Checker) {
 // MARK: - DetectionStore
 
 private extension Selftest {
+    @MainActor
+    static func detectionIdentityHostNameIsNonempty(_ t: Checker) {
+        t.suite("DetectionIdentity.localHostName")
+        t.expectTrue(!DetectionIdentity.current.endpointHost.isEmpty, "hostNameIsNonempty")
+    }
+
     @MainActor
     static func detectionStoreSchemaAndReopen(_ t: Checker) {
         t.suite("DetectionStore.schemaAndReopen")

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PerchCore
 import SQLite3
@@ -35,8 +36,15 @@ struct DetectionIdentity: Equatable, Sendable {
     static var current: DetectionIdentity {
         DetectionIdentity(
             endpointUser: NSUserName(),
-            endpointHost: ProcessInfo.processInfo.hostName,
+            endpointHost: localHostName,
             producerVersion: AppVersion.string)
+    }
+
+    private static var localHostName: String {
+        let capacity = Int(MAXHOSTNAMELEN)
+        var buffer = [CChar](repeating: 0, count: capacity + 1)
+        guard gethostname(&buffer, capacity) == 0 else { return "unknown" }
+        return String(cString: buffer)
     }
 }
 
