@@ -93,6 +93,24 @@ final class DetectionStore {
     static let recordSchemaVersion = 1
     static let retentionDays = 30
     static let retentionInterval: TimeInterval = 30 * 24 * 60 * 60
+    static let eventColumns = [
+        "record_schema_version",
+        "event_id",
+        "observed_at_ms",
+        "endpoint_user",
+        "endpoint_host",
+        "producer_version",
+        "agent",
+        "session_id",
+        "tool_use_id",
+        "tool_name",
+        "risk_level",
+    ]
+    static let findingColumns = [
+        "event_id",
+        "finding_code",
+        "finding_level",
+    ]
     static let exportColumns = [
         "record_schema_version",
         "event_id",
@@ -119,6 +137,7 @@ final class DetectionStore {
     private var insertFindingStatement: OpaquePointer?
     private var recentPostureStatement: OpaquePointer?
     private var pruneStatement: OpaquePointer?
+    private var insightsStatement: OpaquePointer?
     private var isDisabled = false
     private var lastPruneAt: Date?
 
@@ -164,6 +183,35 @@ final class DetectionStore {
         enqueue(record)
     }
 
+    /// Reads the retained metadata needed by the local Insights window. The
+    /// store queue owns SQLite work; completion returns on the main queue.
+    func loadInsights(
+        range: InsightsRange,
+        now: Date = Date(),
+        completion: @escaping (Result<DetectionInsightsSnapshot, Error>) -> Void
+    ) {
+        let calendar: Calendar = {
+            var value = Calendar.current
+            value.timeZone = .current
+            return value
+        }()
+        queue.async { [self] in
+            let result: Result<DetectionInsightsSnapshot, Error>
+            do {
+                result = .success(try loadInsightsOnQueue(
+                    range: range,
+                    now: now,
+                    calendar: calendar))
+            } catch {
+                handleOperationError(error, operation: "insights query")
+                result = .failure(error)
+            }
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+    }
+
     func close() {
         queue.sync {
             closeOnQueue()
@@ -183,6 +231,17 @@ final class DetectionStore {
         try queue.sync {
             guard database != nil, !isDisabled else { throw DetectionStoreError.disabled }
             return try insertOnQueue(record)
+        }
+    }
+
+    func loadInsightsSynchronously(
+        range: InsightsRange,
+        now: Date,
+        calendar: Calendar
+    ) throws -> DetectionInsightsSnapshot {
+        try queue.sync {
+            guard database != nil, !isDisabled else { throw DetectionStoreError.disabled }
+            return try loadInsightsOnQueue(range: range, now: now, calendar: calendar)
         }
     }
 
@@ -388,6 +447,25 @@ final class DetectionStore {
             DELETE FROM detection_events
             WHERE observed_at_ms < ?
             """)
+        insightsStatement = try prepare("""
+            SELECT
+                e.event_id,
+                e.observed_at_ms,
+                e.agent,
+                e.session_id,
+                e.tool_name,
+                e.risk_level,
+                f.finding_code,
+                f.finding_level
+            FROM detection_events AS e
+            JOIN detection_findings AS f USING (event_id)
+            WHERE e.observed_at_ms >= ? AND e.observed_at_ms <= ?
+            ORDER BY
+                e.observed_at_ms,
+                e.event_id,
+                f.finding_code,
+                f.finding_level
+            """)
     }
 
     private func closeOnQueue() {
@@ -396,6 +474,7 @@ final class DetectionStore {
             insertFindingStatement,
             recentPostureStatement,
             pruneStatement,
+            insightsStatement,
         ] {
             if let statement { sqlite3_finalize(statement) }
         }
@@ -403,6 +482,7 @@ final class DetectionStore {
         insertFindingStatement = nil
         recentPostureStatement = nil
         pruneStatement = nil
+        insightsStatement = nil
         if let database {
             sqlite3_close_v2(database)
             self.database = nil
@@ -518,6 +598,65 @@ final class DetectionStore {
             result.append(DetectionPostureEvent(
                 level: level,
                 observedAt: Date(timeIntervalSince1970: Double(observedAtMs) / 1000)))
+        }
+    }
+
+    private func loadInsightsOnQueue(
+        range: InsightsRange,
+        now: Date,
+        calendar: Calendar
+    ) throws -> DetectionInsightsSnapshot {
+        guard let statement = insightsStatement else {
+            throw DetectionStoreError.disabled
+        }
+        let buckets = range.bucketDefinitions(now: now, calendar: calendar)
+        guard let start = buckets.first?.start,
+              let end = buckets.last?.end else {
+            throw DetectionStoreError.invalidRecord
+        }
+
+        reset(statement)
+        defer { reset(statement) }
+        try bind(Self.milliseconds(start), at: 1, in: statement)
+        try bind(Self.milliseconds(end), at: 2, in: statement)
+
+        var rows: [DetectionInsightsSourceRow] = []
+        while true {
+            let code = sqlite3_step(statement)
+            if code == SQLITE_DONE {
+                return DetectionInsightsSnapshot.aggregate(
+                    rows: rows,
+                    range: range,
+                    now: now,
+                    calendar: calendar)
+            }
+            guard code == SQLITE_ROW else {
+                throw sqliteError("insights query", code: code)
+            }
+
+            let agentRaw = Self.textColumn(statement, at: 2)
+            guard let agent = AgentKind(rawValue: agentRaw),
+                  let riskLevel = Self.riskLevel(
+                    label: Self.textColumn(statement, at: 5)),
+                  let findingLevel = Self.riskLevel(
+                    label: Self.textColumn(statement, at: 7)),
+                  riskLevel != .safe,
+                  findingLevel != .safe else {
+                throw DetectionStoreError.sqlite(
+                    operation: "insights decoding",
+                    code: SQLITE_MISMATCH)
+            }
+
+            rows.append(DetectionInsightsSourceRow(
+                eventID: Self.textColumn(statement, at: 0),
+                observedAt: Date(
+                    timeIntervalSince1970: Double(sqlite3_column_int64(statement, 1)) / 1000),
+                agent: agent,
+                sessionID: Self.textColumn(statement, at: 3),
+                toolName: Self.textColumn(statement, at: 4),
+                riskLevel: riskLevel,
+                findingCode: Self.textColumn(statement, at: 6),
+                findingLevel: findingLevel))
         }
     }
 
@@ -665,6 +804,15 @@ final class DetectionStore {
     private static func textColumn(_ statement: OpaquePointer, at index: Int32) -> String {
         guard let bytes = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: UnsafeRawPointer(bytes).assumingMemoryBound(to: CChar.self))
+    }
+
+    private static func riskLevel(label: String) -> RiskLevel? {
+        switch label {
+        case "safe": return .safe
+        case "caution": return .caution
+        case "danger": return .danger
+        default: return nil
+        }
     }
 
     private static func scalarInt(_ sql: String, database: OpaquePointer) -> Int64? {

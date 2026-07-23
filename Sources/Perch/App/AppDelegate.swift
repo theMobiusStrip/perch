@@ -9,6 +9,7 @@ struct AppActions {
     var openRecentDetections: () -> Void
     var toggleNotch: () -> Void
     var openDebugWindow: () -> Void
+    var openInsights: () -> Void
     var openUsageHistory: () -> Void
     var openWorktrees: () -> Void
     var quit: () -> Void
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var worktreeWindow: WorktreeWindowController?
     private var setupWindow: SetupWindowController?
     private var recentDetectionsWindow: RecentDetectionsWindowController?
+    private var insightsWindow: InsightsWindowController?
     private var cancellables = Set<AnyCancellable>()
     /// True while the notch is showing attention we raised via onAttention.
     /// Lets the session-publish observer clear notification-driven
@@ -138,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               worktrees: worktreeModel,
                                               openWorktrees: { [weak self] in self?.openWorktreeWindow() },
                                               openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
+                                              openInsights: { [weak self] in self?.openInsightsWindow() },
                                               openSetup: { [weak self] in self?.openSetupWindow() },
                                               openRecentDetections: { [weak self] in self?.openRecentDetectionsWindow() })
         notchController.show()
@@ -297,9 +300,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.debugWindow?.show()
             },
+            openInsights: { [weak self] in self?.openInsightsWindow() },
             openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
             openWorktrees: { [weak self] in self?.openWorktreeWindow() },
             quit: { NSApp.terminate(nil) })
+    }
+
+    private func openInsightsWindow() {
+        if insightsWindow == nil {
+            insightsWindow = InsightsWindowController(
+                model: InsightsModel(store: detectionStore))
+        }
+        insightsWindow?.show()
     }
 
     private func openWorktreeWindow() {

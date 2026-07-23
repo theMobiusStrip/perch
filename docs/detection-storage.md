@@ -1,9 +1,9 @@
 # Detection storage
 
-Perch keeps a compact local SQLite record of accepted `caution` and `danger`
+Perch keeps a compact local SQLite record of deduplicated `caution` and `danger`
 detections. This preserves the rolling posture across app restarts and provides
-a stable source contract for a future Crowsnest adapter. It is not a detailed
-history database or a tamper-evident compliance log.
+a stable source contract for local Insights and a future Crowsnest adapter. It
+is not a detailed history database or a tamper-evident compliance log.
 
 ## Location and retention
 
@@ -20,8 +20,7 @@ timeout.
 
 Rows are retained for 30 days and pruned without a foreground `VACUUM`.
 Perch restores only risk levels from the previous hour to rebuild the posture
-score. It does not replay old cards or notifications and does not expose a
-local history browser.
+score. It does not replay old cards or notifications.
 
 ## What is stored
 
@@ -42,6 +41,28 @@ execution outcomes.
 A row means only that Perch observed a tool request and emitted the listed
 findings. It does not claim that the request was approved, denied, executed, or
 completed.
+
+## Local Insights
+
+Menu bar → **Insights…** queries the same SQLite database in-process. It does
+not create a second database, add stored fields, or make network requests.
+
+The window provides:
+
+- an exact rolling 24-hour view with fixed one-hour buckets;
+- today plus the previous 6 or 29 local calendar days for 7-day and 30-day
+  views, with daylight-saving-aware day boundaries;
+- caution/danger timelines;
+- findings grouped by `(finding_code, finding_level)`;
+- detection counts grouped by agent and tool;
+- sessions grouped by `(agent, session_id)`, with tool and finding clusters.
+
+Insights displays only the metadata listed above. The separate **Recent
+Detections…** window is a detailed, in-memory past-hour feed; old cards and
+their command summaries are not reconstructed from SQLite.
+
+Both surfaces describe observed requests only. Perch does not know whether a
+request was approved, denied, executed, or completed.
 
 ## Consumer contract
 

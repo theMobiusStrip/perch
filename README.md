@@ -58,6 +58,7 @@ and what they've **left behind**:
 | 📡 **Monitoring health** | A separate coverage strip checks the deployed bridge, local event socket, Claude wiring, and Codex hook trust, then waits for a real event from each configured agent before reporting delivery as verified. Its state also colors the collapsed notch and menu-bar bird; guided setup installs or repairs integrations. |
 | 🔔 **Alerts even when nothing prompts** | Danger fires an OS notification — including calls auto-approved by allow rules or relaxed permission modes. Notification actions jump straight to the exact detection, session, or usage view instead of leaving you to hunt for context. |
 | 📊 **Explainable security score** | A rolling 0–100 posture score in the notch and menu bar: −25 per danger, −5 per caution over the last hour. Open the strip for the formula and retained recent detections; dismissing an alert card does not erase its history. |
+| 🔎 **Local Insights** | A zero-setup, offline view of caution/danger trends on this Mac: 24-hour, 7-day, and 30-day timelines plus findings grouped by code, agent, tool, and session (menu bar → **Insights…**). Perch records what it observed, not whether a request ran. |
 | 🐦 **Every session at a glance** | Live list of all Claude Code and Codex sessions — running / waiting / idle, last message, context gauge, red badge on any session that just ran something dangerous. |
 | 🎫 **Token usage** | Today / 7-day / 30-day totals in the notch, rate-limit gauges with reset countdowns, and a full per-day / per-model / per-project dashboard (menu bar → **Token Usage…**). |
 | 🌳 **Worktree housekeeping** | A read-only cross-project audit of the git worktrees agent sessions leave behind — classified `reclaimable` (clean, merged, stale), `review` (dirty or ahead of the default branch), `active` (a live session or recently touched), or `orphaned` — with disk sizes and a *Copy cleanup commands* button (menu bar → **Worktrees…**). Perch scores and reports; it never deletes. |
@@ -239,13 +240,19 @@ danger raises an OS notification and a notch card. In parallel, Perch tails
 transcript/rollout files and validates liveness against `~/.claude/sessions`
 pid files, so sessions started before Perch launched are covered too.
 
-Accepted caution/danger detections also write compact metadata to
+Deduplicated caution/danger detections also write compact metadata to
 `~/Library/Application Support/Perch/detections.sqlite3` after the hook reply
 and live-feed deduplication. The database retains 30 days and restores only the
 past hour's posture after restart. It never stores commands, tool payloads,
 paths, prompts, finding prose, decisions, or outcomes. The versioned,
 read-only consumer contract is documented in
 [Detection storage](docs/detection-storage.md).
+
+Menu bar → **Insights…** reads that same database locally for 24-hour, 7-day,
+and 30-day timelines plus finding, agent, tool, and session aggregates. It
+creates no second database, sends no telemetry, and does not claim that an
+observed request was approved, denied, executed, or completed. The detailed
+**Recent Detections…** view remains an in-memory past-hour feed.
 
 One caveat: Claude's rate-limit gauges are fed by the statusline payload,
 which only terminal `claude` sessions render — the Claude desktop app never
@@ -266,12 +273,13 @@ be audited, not trusted**:
   fire-and-forget ~10 ms, and if Perch is wedged the hook gives up on its
   own after 5 s — the agent always proceeds.
 - **100% local detection, zero telemetry.** No analytics, no cloud detection
-  service — nothing Perch observes ever leaves your machine. Accepted
+  service — nothing Perch observes ever leaves your machine. Recorded
   caution/danger detections retain only minimal metadata in local SQLite for
-  30 days; there is no uploader. The one network
-  call in the codebase is the optional update check: an unauthenticated GET
-  to the GitHub releases API, on by default, toggleable from the menu bar
-  (**Check Automatically**), and zero network when off. Verify it yourself:
+  30 days; Insights reads that store in-process and there is no uploader. The
+  one network call in the codebase is the optional update check: an
+  unauthenticated GET to the GitHub releases API, on by default, toggleable
+  from the menu bar (**Check Automatically**), and zero network when off.
+  Verify it yourself:
   `grep -rn "URLSession\|NWConnection" Sources/` matches only
   [`UpdateChecker.swift`](Sources/Perch/Model/UpdateChecker.swift).
 - **The detector doesn't persist what it inspects.** Risk scoring is pure
