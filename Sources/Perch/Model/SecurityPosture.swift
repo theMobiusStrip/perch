@@ -8,7 +8,7 @@ import PerchCore
 /// Purely informational, like everything else in Perch.
 @MainActor
 final class SecurityPosture: ObservableObject {
-    static let window: TimeInterval = 3600
+    nonisolated static let window: TimeInterval = 3600
     static let dangerPenalty = 25
     static let cautionPenalty = 5
 
@@ -52,6 +52,15 @@ final class SecurityPosture: ObservableObject {
         guard level != .safe else { return }
         events.append(Event(level: level, at: date))
         recompute(now: date)
+    }
+
+    /// Restores only the rolling counters after launch. Historical rows never
+    /// become cards, notifications, or attention events.
+    func hydrate(_ restored: [DetectionPostureEvent], now: Date = Date()) {
+        events.append(contentsOf: restored.map {
+            Event(level: $0.level, at: $0.observedAt)
+        })
+        recompute(now: now)
     }
 
     func recompute(now: Date = Date()) {

@@ -34,6 +34,7 @@ enum Doctor {
             + "Token usage totals come from transcripts and work for all session types.")
         lines.append(CodexHookTrust.doctorLine()
             + " If Codex hooks are installed but tool calls never surface, missing trust is why.")
+        lines.append(DetectionStore.diagnosticLine())
         lines.append("Log: \(PerchPaths.logFile.path)")
         return DoctorReport(state: aggregateState(for: checks), checks: checks,
                             text: lines.joined(separator: "\n"))

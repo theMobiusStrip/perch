@@ -14,6 +14,7 @@ final class SessionStore: ObservableObject {
     var riskFeed: RiskFeed?
     var usageStore: UsageStore?
     var securityPosture: SecurityPosture?
+    var detectionStore: DetectionStore?
     /// (session, reason) — notch auto-expand + notifications.
     var onAttention: ((Session, String) -> Void)?
     var onTaskComplete: ((Session, String?) -> Void)?
@@ -134,7 +135,8 @@ final class SessionStore: ObservableObject {
             // and, for danger, an OS notification.
             reply(.empty)
             surfaceRisk(risk, agent: agent, sid: sid, toolName: toolName,
-                        toolInput: payload.toolInput, cwd: payload.cwd)
+                        toolUseId: payload.toolUseId, toolInput: payload.toolInput,
+                        cwd: payload.cwd)
 
         case .postToolUse:
             upsert(agent: agent, id: sid) { s in
@@ -179,7 +181,8 @@ final class SessionStore: ObservableObject {
             // zero added latency; Perch just surfaces what is being asked.
             reply(.empty)
             surfaceRisk(risk, agent: agent, sid: sid, toolName: toolName,
-                        toolInput: payload.toolInput, cwd: payload.cwd)
+                        toolUseId: payload.toolUseId, toolInput: payload.toolInput,
+                        cwd: payload.cwd)
             if let session = find(agent: agent, id: sid) {
                 let reason = risk.isEmpty
                     ? "Permission requested: \(toolName)"
@@ -258,7 +261,8 @@ final class SessionStore: ObservableObject {
     /// notch card, and escalate danger to an OS notification. Detection never
     /// touches the agent — it only makes noise on this side of the glass.
     private func surfaceRisk(_ risk: RiskAssessment, agent: AgentKind, sid: String,
-                             toolName: String, toolInput: JSONValue?, cwd: String?) {
+                             toolName: String, toolUseId: String?,
+                             toolInput: JSONValue?, cwd: String?) {
         guard !risk.isEmpty else { return }
         PerchLog.warn("Risk \(risk.level.label) on \(toolName) (\(agent.rawValue)): \(risk.findings.map(\.code).joined(separator: ","))",
                       category: "detect")
@@ -269,17 +273,25 @@ final class SessionStore: ObservableObject {
         let resolvedInput = toolInput ?? .null
         let resolvedCwd = cwd ?? find(agent: agent, id: sid)?.cwd
         let entry: RiskFeed.Entry
+        let acceptedByFeed: Bool
         if let riskFeed {
-            guard let added = riskFeed.addEntry(key: key, toolName: toolName,
+            guard let added = riskFeed.addEntry(key: key, toolUseId: toolUseId,
+                                                toolName: toolName,
                                                 toolInput: resolvedInput, cwd: resolvedCwd,
                                                 risk: risk) else { return }
             entry = added
+            acceptedByFeed = true
         } else {
-            entry = RiskFeed.Entry(id: UUID(), key: key, toolName: toolName,
+            entry = RiskFeed.Entry(id: UUID(), key: key, toolUseId: toolUseId,
+                                   toolName: toolName,
                                    toolInput: resolvedInput, cwd: resolvedCwd,
                                    receivedAt: Date(), risk: risk)
+            acceptedByFeed = false
         }
         securityPosture?.record(risk.level)
+        if acceptedByFeed {
+            detectionStore?.enqueue(entry)
+        }
         if risk.level == .danger, let session = find(agent: agent, id: sid) {
             onRiskDetected?(session, entry)
         }
