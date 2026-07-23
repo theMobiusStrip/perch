@@ -22,6 +22,8 @@ events. SwiftPM only — there is no Xcode project.
   below (bare-`^` command anchor; read-only). Runs in CI before the build and
   as the pre-commit hook; `make hooks` installs the hook (once per clone, since
   git won't auto-run repo hooks).
+- `make verify` — run the complete local gate: fitness, selftest, and
+  metamorphic checks.
 - `make app` — assemble ad-hoc-signed `dist/Perch.app`.
 
 ## Cross-review
