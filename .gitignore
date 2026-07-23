@@ -4,6 +4,7 @@ dist/
 *.code-workspace
 .swiftpm/
 PLAN.md
+MEMORY.md
 .claude/
 .fuzz-progress
 fuzz-crashes/
