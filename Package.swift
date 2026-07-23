@@ -25,7 +25,8 @@ let package = Package(
         .executableTarget(
             name: "Perch",
             dependencies: ["PerchCore"],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         // Harness tooling — offline oracles for bug-bashing PerchCore. Not
         // shipped in the app bundle (Makefile copies only Perch/perch-bridge).

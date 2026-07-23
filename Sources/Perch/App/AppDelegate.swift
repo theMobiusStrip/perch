@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let securityPosture = SecurityPosture()
     let monitoringHealth = MonitoringHealth()
     let notificationPreferences = NotificationPreferences()
+    private let detectionStore = DetectionStore()
 
     private var socketServer: UnixSocketServer?
     private var livenessMonitor: LivenessMonitor?
@@ -69,6 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionStore.riskFeed = riskFeed
         sessionStore.usageStore = usageStore
         sessionStore.securityPosture = securityPosture
+        sessionStore.detectionStore = detectionStore
+        detectionStore.start { [weak self] result in
+            guard case .success(let restored) = result else { return }
+            Task { @MainActor in
+                self?.securityPosture.hydrate(restored)
+            }
+        }
 
         let notifier = Notifier(sessions: sessionStore, preferences: notificationPreferences)
         self.notifier = notifier
@@ -213,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         monitoringHealth.persistVerification()
         socketServer?.stop()
+        detectionStore.close()
         PerchLog.info("Perch terminated")
     }
 

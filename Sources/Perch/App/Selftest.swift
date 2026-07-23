@@ -1,5 +1,6 @@
 import Foundation
 import PerchCore
+import SQLite3
 
 /// In-binary selftest, run via `Perch --selftest`. Ports the old XCTest
 /// suites (CoreTests/StoreTests) so they keep running on machines whose
@@ -48,6 +49,12 @@ enum Selftest {
         riskFeedDedupesSameCall(t)
         riskFeedDismissAndFocusClamp(t)
         riskFeedRetainsRecentDetections(t)
+        detectionIdentityHostNameIsNonempty(t)
+        detectionStoreSchemaAndReopen(t)
+        detectionStoreTransactionAndDedupe(t)
+        detectionStoreRetentionAndPostureRestore(t)
+        detectionStoreFailureAndPermissions(t)
+        sessionStorePersistsOnlyAcceptedMetadata(t)
         monitoringSnapshotSeparatesCoverageFromPosture(t)
         monitoringHealthSeparatesConfigurationFromVerification(t)
         notificationCoalescerSuppressesOnlyOverlap(t)
@@ -714,6 +721,12 @@ private extension Selftest {
         t.expectEqual(posture.score, 70, "mixedScore")
         t.expectEqual(posture.dangerCount, 1, "dangerCounted")
         t.expectEqual(posture.cautionCount, 1, "cautionCounted")
+
+        posture.hydrate([
+            DetectionPostureEvent(level: .caution, observedAt: now.addingTimeInterval(-20)),
+        ], now: now)
+        t.expectEqual(posture.score, 65, "hydratedEventCounts")
+        t.expectEqual(posture.cautionCount, 2, "hydratedCautionCounted")
 
         // Events age out of the 1h window and the score recovers.
         posture.recompute(now: now.addingTimeInterval(SecurityPosture.window + 60))
@@ -2339,4 +2352,480 @@ private func codexTrustEventNamesAndConfigScan(_ t: Checker) {
     t.expectEqual(CodexHookTrust.trustRecordCount(configToml: ""), 0, "emptyConfigZero")
     t.expectEqual(CodexHookTrust.trustRecordCount(configToml: "trusted_hash = \"sha256:x\""), 0,
                   "hashOutsideSectionIgnored")
+}
+
+// MARK: - DetectionStore
+
+private extension Selftest {
+    @MainActor
+    static func detectionIdentityHostNameIsNonempty(_ t: Checker) {
+        t.suite("DetectionIdentity.localHostName")
+        t.expectTrue(!DetectionIdentity.current.endpointHost.isEmpty, "hostNameIsNonempty")
+    }
+
+    @MainActor
+    static func detectionStoreSchemaAndReopen(_ t: Checker) {
+        t.suite("DetectionStore.schemaAndReopen")
+        let root = detectionTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("perch/detections.sqlite3")
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+
+        let store = detectionStore(at: databaseURL)
+        let initial = try? store.startSynchronously(now: now)
+        t.expectEqual(initial?.count, 0, "freshStoreHasNoPosture")
+        t.expectEqual(DetectionStore.inspect(databaseURL: databaseURL), .ready,
+                      "freshContractIsInspectable")
+        t.expectEqual(sqliteScalar(databaseURL, "PRAGMA application_id"),
+                      String(DetectionStore.applicationID), "applicationID")
+        t.expectEqual(sqliteScalar(databaseURL, "PRAGMA user_version"),
+                      String(DetectionStore.schemaVersion), "schemaVersion")
+        t.expectEqual(sqliteColumnNames(databaseURL, "SELECT * FROM detection_export_v1 LIMIT 0"),
+                      DetectionStore.exportColumns, "exactExportColumns")
+        store.close()
+
+        let reopened = detectionStore(at: databaseURL)
+        t.expectEqual((try? reopened.startSynchronously(now: now))?.count, 0,
+                      "reopenSucceeds")
+        t.expectEqual(DetectionStore.inspect(databaseURL: databaseURL), .ready,
+                      "reopenedContractIsReady")
+        reopened.close()
+
+        // A conflicting schema makes migration fail atomically. The store
+        // preserves the database for diagnosis rather than replacing it.
+        let conflictURL = root.appendingPathComponent("conflict/detections.sqlite3")
+        t.expectTrue(sqliteExecute(
+            conflictURL,
+            "CREATE TABLE detection_events (existing_column TEXT)"),
+            "createMigrationConflict")
+        let conflictStore = detectionStore(at: conflictURL)
+        t.expectNil(try? conflictStore.startSynchronously(now: now),
+                    "conflictingMigrationFails")
+        conflictStore.close()
+        t.expectEqual(sqliteScalar(conflictURL, "PRAGMA user_version"), "0",
+                      "failedMigrationLeavesVersionZero")
+        t.expectEqual(sqliteScalar(conflictURL, "PRAGMA application_id"), "0",
+                      "failedMigrationRollsBackApplicationID")
+        t.expectEqual(
+            sqliteRows(conflictURL, "PRAGMA table_info(detection_events)")?
+                .compactMap { $0[safe: 1] ?? nil },
+            ["existing_column"],
+            "failedMigrationPreservesOriginalTable")
+    }
+
+    @MainActor
+    static func detectionStoreTransactionAndDedupe(_ t: Checker) {
+        t.suite("DetectionStore.transactionAndDedupe")
+        let root = detectionTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("perch/detections.sqlite3")
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let store = detectionStore(at: databaseURL)
+        guard (try? store.startSynchronously(now: now)) != nil else {
+            t.expectTrue(false, "open")
+            return
+        }
+
+        let first = detectionRecord(
+            id: "event-a",
+            at: now,
+            toolUseID: "tool-1",
+            findings: [
+                DetectionFindingRecord(code: "destructive-delete", level: .danger),
+                DetectionFindingRecord(code: "privilege-escalation", level: .danger),
+            ])
+        t.expectEqual(try? store.insertSynchronously(first), true, "eventInserted")
+
+        let rows = sqliteRows(databaseURL, """
+            SELECT producer, event_id, risk_level, finding_code, finding_level
+            FROM detection_export_v1
+            ORDER BY observed_at_ms, event_id, finding_code
+            """)
+        t.expectEqual(rows?.count, 2, "oneExportRowPerFinding")
+        t.expectEqual(rows?.first?[safe: 0] ?? nil, "perch", "producerConstant")
+        t.expectEqual(rows?.first?[safe: 1] ?? nil, "event-a", "eventIDExported")
+        t.expectEqual(rows?.first?[safe: 2] ?? nil, "danger", "riskLevelExported")
+        t.expectEqual(rows?.compactMap { $0[safe: 3] ?? nil },
+                      ["destructive-delete", "privilege-escalation"],
+                      "findingCodesExportedInStableOrder")
+
+        // A child-row failure rolls back the parent and every prior child.
+        let invalid = detectionRecord(
+            id: "event-invalid",
+            at: now.addingTimeInterval(1),
+            toolUseID: "tool-invalid",
+            findings: [
+                DetectionFindingRecord(code: "duplicate", level: .danger),
+                DetectionFindingRecord(code: "duplicate", level: .danger),
+            ])
+        t.expectNil(try? store.insertSynchronously(invalid), "childFailureReported")
+        t.expectEqual(sqliteScalar(
+            databaseURL,
+            "SELECT count(*) FROM detection_events WHERE event_id='event-invalid'"),
+            "0", "childFailureRollsBackParent")
+
+        let duplicateTool = detectionRecord(
+            id: "event-b",
+            at: now.addingTimeInterval(2),
+            toolUseID: "tool-1")
+        t.expectEqual(try? store.insertSynchronously(duplicateTool), false,
+                      "toolUseConflictIsSuccessfulNoOp")
+        t.expectEqual(sqliteScalar(databaseURL, "SELECT count(*) FROM detection_events"),
+                      "1", "dedupeDoesNotAddEvent")
+
+        let eventColumns = sqliteRows(databaseURL, "PRAGMA table_info(detection_events)")?
+            .compactMap { $0[safe: 1] ?? nil }
+        let findingColumns = sqliteRows(databaseURL, "PRAGMA table_info(detection_findings)")?
+            .compactMap { $0[safe: 1] ?? nil }
+        let storedColumns = Set((eventColumns ?? []) + (findingColumns ?? []))
+        let forbidden = Set([
+            "tool_input", "tool_output", "command", "cwd", "path", "repo",
+            "url", "prompt", "response", "patch", "content", "input_hash",
+            "finding_message", "summary", "outcome",
+        ])
+        t.expectTrue(storedColumns.isDisjoint(with: forbidden),
+                     "schemaContainsNoRawOrDerivedContent")
+        store.close()
+    }
+
+    @MainActor
+    static func detectionStoreRetentionAndPostureRestore(_ t: Checker) {
+        t.suite("DetectionStore.retentionAndPostureRestore")
+        let root = detectionTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("perch/detections.sqlite3")
+        let now = Date(timeIntervalSince1970: 1_900_000_000)
+        let store = detectionStore(at: databaseURL)
+        guard (try? store.startSynchronously(now: now)) != nil else {
+            t.expectTrue(false, "open")
+            return
+        }
+
+        let records = [
+            detectionRecord(id: "expired", at: now.addingTimeInterval(-31 * 86_400),
+                            toolUseID: "old"),
+            detectionRecord(id: "retained", at: now.addingTimeInterval(-29 * 86_400),
+                            toolUseID: "retained"),
+            detectionRecord(id: "recent-a", at: now.addingTimeInterval(-30 * 60),
+                            toolUseID: "recent-a", risk: .caution,
+                            findings: [
+                                DetectionFindingRecord(code: "agent-memory-write",
+                                                       level: .caution),
+                            ]),
+            detectionRecord(id: "recent-b", at: now.addingTimeInterval(-10 * 60),
+                            toolUseID: "recent-b"),
+        ]
+        for record in records {
+            t.expectEqual(try? store.insertSynchronously(record), true,
+                          "insert.\(record.eventID)")
+        }
+        t.expectEqual(try? store.pruneSynchronously(now: now), 1, "oneExpiredEventPruned")
+        t.expectEqual(sqliteScalar(databaseURL, "SELECT count(*) FROM detection_findings"),
+                      "3", "pruneCascadesToFindings")
+        t.expectEqual(sqliteRows(databaseURL, """
+            SELECT event_id FROM detection_export_v1
+            ORDER BY observed_at_ms, event_id, finding_code
+            """)?.compactMap { $0.first ?? nil },
+            ["retained", "recent-a", "recent-b"],
+            "exportSupportsStableCursorOrder")
+        store.close()
+
+        let reopened = detectionStore(at: databaseURL)
+        let restored = try? reopened.startSynchronously(now: now)
+        t.expectEqual(restored?.map(\.level), [.caution, .danger],
+                      "onlyPastHourRiskLevelsRestored")
+        t.expectTrue(restored?.allSatisfy {
+            now.timeIntervalSince($0.observedAt) <= SecurityPosture.window
+        } == true, "restoredEventsAreBoundedToPostureWindow")
+        reopened.close()
+    }
+
+    @MainActor
+    static func detectionStoreFailureAndPermissions(_ t: Checker) {
+        t.suite("DetectionStore.failureAndPermissions")
+        let root = detectionTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("perch/detections.sqlite3")
+        let store = detectionStore(at: databaseURL)
+        t.expectTrue((try? store.startSynchronously()) != nil, "open")
+
+        let directoryMode = posixMode(databaseURL.deletingLastPathComponent())
+        let databaseMode = posixMode(databaseURL)
+        let walURL = URL(fileURLWithPath: databaseURL.path + "-wal")
+        let shmURL = URL(fileURLWithPath: databaseURL.path + "-shm")
+        t.expectEqual(directoryMode, 0o700, "directoryMode0700")
+        t.expectEqual(databaseMode, 0o600, "databaseMode0600")
+        t.expectTrue(FileManager.default.fileExists(atPath: walURL.path), "walExists")
+        t.expectTrue(FileManager.default.fileExists(atPath: shmURL.path), "shmExists")
+        t.expectEqual(posixMode(walURL), 0o600, "walMode0600")
+        t.expectEqual(posixMode(shmURL), 0o600, "shmMode0600")
+        store.close()
+
+        let missingURL = root.appendingPathComponent("missing/detections.sqlite3")
+        t.expectEqual(DetectionStore.inspect(databaseURL: missingURL), .notCreated,
+                      "missingStoreReported")
+
+        let corruptURL = root.appendingPathComponent("corrupt/detections.sqlite3")
+        try? FileManager.default.createDirectory(
+            at: corruptURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        let corruptBytes = Data("not a sqlite database".utf8)
+        try? corruptBytes.write(to: corruptURL)
+        let corruptStore = detectionStore(at: corruptURL)
+        t.expectNil(try? corruptStore.startSynchronously(), "corruptStoreRejected")
+        corruptStore.close()
+        t.expectEqual(DetectionStore.inspect(databaseURL: corruptURL), .unavailable,
+                      "corruptStoreReportedWithoutReplacement")
+        t.expectEqual(try? Data(contentsOf: corruptURL), corruptBytes,
+                      "corruptDatabasePreserved")
+
+        let line = DetectionStore.diagnosticLine(databaseURL: databaseURL)
+        t.expectTrue(line.contains("schema 1"), "doctorShowsSchema")
+        t.expectTrue(line.contains("contract v1"), "doctorShowsContract")
+        t.expectTrue(line.contains("30-day retention"), "doctorShowsRetention")
+    }
+
+    @MainActor
+    static func sessionStorePersistsOnlyAcceptedMetadata(_ t: Checker) {
+        t.suite("SessionStore.persistsOnlyAcceptedMetadata")
+        let root = detectionTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("perch/detections.sqlite3")
+        let durable = detectionStore(at: databaseURL)
+        guard (try? durable.startSynchronously()) != nil else {
+            t.expectTrue(false, "open")
+            return
+        }
+
+        let store = SessionStore()
+        let feed = RiskFeed()
+        let posture = SecurityPosture()
+        store.riskFeed = feed
+        store.securityPosture = posture
+        store.detectionStore = durable
+        let recorder = ReplyRecorder()
+        let secret = "must-never-enter-detection-sqlite"
+        let dangerousInput: JSONValue = .object([
+            "command": .string("sudo rm -rf /tmp/\(secret)"),
+        ])
+
+        store.handleEnvelope(hookEnvelope(event: "PreToolUse", extra: [
+            "tool_name": .string("Bash"),
+            "tool_input": dangerousInput,
+            "tool_use_id": .string("tool-accepted"),
+            "cwd": .string("/tmp/\(secret)"),
+        ])) { recorder.record($0) }
+        t.expectEqual(recorder.count, 1, "hookReplyIsImmediate")
+        t.expectNil(recorder.replies.first?.stdout, "hookReplyRemainsObserveOnly")
+        durable.waitUntilIdle()
+
+        let rows = sqliteRows(databaseURL, """
+            SELECT endpoint_user, endpoint_host, producer_version, agent,
+                   session_id, tool_use_id, tool_name, risk_level, finding_code
+            FROM detection_export_v1
+            """)
+        t.expectEqual(
+            sqliteScalar(databaseURL, "SELECT count(*) FROM detection_events"),
+            "1", "acceptedDetectionPersisted")
+        t.expectTrue(rows?.isEmpty == false, "acceptedFindingsExported")
+        t.expectEqual(rows?.first?[safe: 0] ?? nil, "test-user", "endpointUserStored")
+        t.expectEqual(rows?.first?[safe: 1] ?? nil, "test-host", "endpointHostStored")
+        t.expectEqual(rows?.first?[safe: 2] ?? nil, "v-test", "producerVersionStored")
+        t.expectEqual(rows?.first?[safe: 3] ?? nil, "claude", "agentStored")
+        t.expectEqual(rows?.first?[safe: 4] ?? nil, "s-1", "sessionStored")
+        t.expectEqual(rows?.first?[safe: 5] ?? nil, "tool-accepted", "toolUseStored")
+        t.expectEqual(rows?.first?[safe: 6] ?? nil, "Bash", "toolNameStored")
+        t.expectEqual(rows?.first?[safe: 7] ?? nil, "danger", "riskStored")
+
+        // The second hook for the same real call is rejected at RiskFeed's
+        // boundary, so it cannot create another durable row.
+        store.handleEnvelope(hookEnvelope(event: "PermissionRequest", extra: [
+            "tool_name": .string("Bash"),
+            "tool_input": dangerousInput,
+            "tool_use_id": .string("tool-accepted"),
+        ])) { recorder.record($0) }
+        durable.waitUntilIdle()
+        t.expectEqual(sqliteScalar(databaseURL, "SELECT count(*) FROM detection_events"),
+                      "1", "feedDedupeIsPersistenceBoundary")
+
+        store.handleEnvelope(hookEnvelope(event: "PreToolUse", extra: [
+            "tool_name": .string("Read"),
+            "tool_input": .object(["file_path": .string("/tmp/\(secret)")]),
+            "tool_use_id": .string("tool-safe"),
+        ])) { recorder.record($0) }
+        durable.waitUntilIdle()
+        t.expectEqual(sqliteScalar(databaseURL, "SELECT count(*) FROM detection_events"),
+                      "1", "safeCallNotPersisted")
+
+        let secretBytes = Data(secret.utf8)
+        let sqliteFiles = [
+            databaseURL,
+            URL(fileURLWithPath: databaseURL.path + "-wal"),
+            URL(fileURLWithPath: databaseURL.path + "-shm"),
+        ]
+        t.expectTrue(sqliteFiles.allSatisfy { url in
+            guard let data = try? Data(contentsOf: url) else { return true }
+            return data.range(of: secretBytes) == nil
+        }, "rawInputAndCwdAbsentFromDatabaseFiles")
+        durable.close()
+
+        // A disabled durable store never suppresses live behavior.
+        let corruptURL = root.appendingPathComponent("disabled/detections.sqlite3")
+        try? FileManager.default.createDirectory(
+            at: corruptURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try? Data("broken".utf8).write(to: corruptURL)
+        let disabled = detectionStore(at: corruptURL)
+        t.expectNil(try? disabled.startSynchronously(), "disabledStoreSetup")
+        let liveStore = SessionStore()
+        let liveFeed = RiskFeed()
+        let livePosture = SecurityPosture()
+        liveStore.riskFeed = liveFeed
+        liveStore.securityPosture = livePosture
+        liveStore.detectionStore = disabled
+        let liveReplies = ReplyRecorder()
+        liveStore.handleEnvelope(hookEnvelope(event: "PreToolUse", extra: [
+            "tool_name": .string("Bash"),
+            "tool_input": .object(["command": .string("sudo shutdown -h now")]),
+        ])) { liveReplies.record($0) }
+        disabled.waitUntilIdle()
+        t.expectEqual(liveReplies.count, 1, "storageFailureStillReplies")
+        t.expectEqual(liveFeed.count, 1, "storageFailureStillShowsCard")
+        t.expectEqual(livePosture.dangerCount, 1, "storageFailureStillUpdatesPosture")
+        disabled.close()
+    }
+
+    static func detectionTempRoot() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("perch-detection-selftest-\(UUID().uuidString)",
+                                    isDirectory: true)
+    }
+
+    static func detectionStore(at url: URL) -> DetectionStore {
+        DetectionStore(
+            databaseURL: url,
+            identity: DetectionIdentity(
+                endpointUser: "test-user",
+                endpointHost: "test-host",
+                producerVersion: "v-test"))
+    }
+
+    static func detectionRecord(
+        id: String,
+        at: Date,
+        toolUseID: String?,
+        risk: RiskLevel = .danger,
+        findings: [DetectionFindingRecord] = [
+            DetectionFindingRecord(code: "destructive-delete", level: .danger),
+        ]
+    ) -> DetectionRecord {
+        DetectionRecord(
+            recordSchemaVersion: DetectionStore.recordSchemaVersion,
+            eventID: id,
+            observedAtMs: Int64((at.timeIntervalSince1970 * 1000).rounded()),
+            endpointUser: "test-user",
+            endpointHost: "test-host",
+            producerVersion: "v-test",
+            agent: .claude,
+            sessionID: "session-1",
+            toolUseID: toolUseID,
+            toolName: "Bash",
+            riskLevel: risk,
+            findings: findings)
+    }
+
+    static func sqliteExecute(_ url: URL, _ sql: String) -> Bool {
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        var database: OpaquePointer?
+        let openCode = url.path.withCString {
+            sqlite3_open_v2(
+                $0,
+                &database,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+                nil)
+        }
+        guard openCode == SQLITE_OK, let database else {
+            if let database { sqlite3_close_v2(database) }
+            return false
+        }
+        defer { sqlite3_close_v2(database) }
+        return sql.withCString {
+            sqlite3_exec(database, $0, nil, nil, nil)
+        } == SQLITE_OK
+    }
+
+    static func sqliteRows(_ url: URL, _ sql: String) -> [[String?]]? {
+        var database: OpaquePointer?
+        let openCode = url.path.withCString {
+            sqlite3_open_v2($0, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        }
+        guard openCode == SQLITE_OK, let database else {
+            if let database { sqlite3_close_v2(database) }
+            return nil
+        }
+        defer { sqlite3_close_v2(database) }
+        sqlite3_busy_timeout(database, 250)
+
+        var statement: OpaquePointer?
+        let prepareCode = sql.withCString {
+            sqlite3_prepare_v2(database, $0, -1, &statement, nil)
+        }
+        guard prepareCode == SQLITE_OK, let statement else { return nil }
+        defer { sqlite3_finalize(statement) }
+
+        var rows: [[String?]] = []
+        while true {
+            let code = sqlite3_step(statement)
+            if code == SQLITE_DONE { return rows }
+            guard code == SQLITE_ROW else { return nil }
+            rows.append((0..<sqlite3_column_count(statement)).map { index in
+                guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+                      let bytes = sqlite3_column_text(statement, index) else {
+                    return nil
+                }
+                return String(
+                    cString: UnsafeRawPointer(bytes).assumingMemoryBound(to: CChar.self))
+            })
+        }
+    }
+
+    static func sqliteScalar(_ url: URL, _ sql: String) -> String? {
+        sqliteRows(url, sql)?.first?.first ?? nil
+    }
+
+    static func sqliteColumnNames(_ url: URL, _ sql: String) -> [String]? {
+        var database: OpaquePointer?
+        let openCode = url.path.withCString {
+            sqlite3_open_v2($0, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        }
+        guard openCode == SQLITE_OK, let database else {
+            if let database { sqlite3_close_v2(database) }
+            return nil
+        }
+        defer { sqlite3_close_v2(database) }
+        var statement: OpaquePointer?
+        let prepareCode = sql.withCString {
+            sqlite3_prepare_v2(database, $0, -1, &statement, nil)
+        }
+        guard prepareCode == SQLITE_OK, let statement else { return nil }
+        defer { sqlite3_finalize(statement) }
+        return (0..<sqlite3_column_count(statement)).compactMap { index in
+            sqlite3_column_name(statement, index).map(String.init(cString:))
+        }
+    }
+
+    static func posixMode(_ url: URL) -> Int? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.posixPermissions] as? NSNumber).map {
+            $0.intValue & 0o777
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
 }

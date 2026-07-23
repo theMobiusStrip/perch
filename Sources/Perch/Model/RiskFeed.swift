@@ -25,6 +25,7 @@ final class RiskFeed: ObservableObject {
     struct Entry: Identifiable {
         let id: UUID
         let key: SessionKey
+        let toolUseId: String?
         let toolName: String
         let toolInput: JSONValue
         let cwd: String?
@@ -51,16 +52,18 @@ final class RiskFeed: ObservableObject {
     /// callers use this to count each real-world call exactly once even
     /// though PreToolUse and PermissionRequest both fire for it.
     @discardableResult
-    func add(key: SessionKey, toolName: String, toolInput: JSONValue,
+    func add(key: SessionKey, toolUseId: String? = nil,
+             toolName: String, toolInput: JSONValue,
              cwd: String?, risk: RiskAssessment, receivedAt: Date = Date()) -> Bool {
-        addEntry(key: key, toolName: toolName, toolInput: toolInput,
+        addEntry(key: key, toolUseId: toolUseId, toolName: toolName, toolInput: toolInput,
                  cwd: cwd, risk: risk, receivedAt: receivedAt) != nil
     }
 
     /// Entry-returning form used by notification routing so a banner can open
     /// the exact retained detection rather than merely the newest session row.
     @discardableResult
-    func addEntry(key: SessionKey, toolName: String, toolInput: JSONValue,
+    func addEntry(key: SessionKey, toolUseId: String? = nil,
+                  toolName: String, toolInput: JSONValue,
                   cwd: String?, risk: RiskAssessment,
                   receivedAt: Date = Date()) -> Entry? {
         guard !risk.isEmpty else { return nil }
@@ -71,8 +74,9 @@ final class RiskFeed: ObservableObject {
         }) {
             return nil
         }
-        let entry = Entry(id: UUID(), key: key, toolName: toolName, toolInput: toolInput,
-                          cwd: cwd, receivedAt: receivedAt, risk: risk)
+        let entry = Entry(id: UUID(), key: key, toolUseId: toolUseId,
+                          toolName: toolName, toolInput: toolInput, cwd: cwd,
+                          receivedAt: receivedAt, risk: risk)
         entries.append(entry)
         recent.append(entry)
         if entries.count == 1 { focusedIndex = 0 }

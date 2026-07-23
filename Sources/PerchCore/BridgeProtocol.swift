@@ -10,6 +10,9 @@ public enum PerchPaths {
     public static var socketPath: String { appSupportDir.appendingPathComponent("perch.sock").path }
     public static var configFile: URL { appSupportDir.appendingPathComponent("config.json") }
     public static var logFile: URL { appSupportDir.appendingPathComponent("perch.log") }
+    public static var detectionDatabaseFile: URL {
+        appSupportDir.appendingPathComponent("detections.sqlite3")
+    }
     /// Stable location the hook commands point at (survives app moves).
     public static var bridgeInstallPath: URL { appSupportDir.appendingPathComponent("perch-bridge") }
 
