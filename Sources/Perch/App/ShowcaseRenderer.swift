@@ -13,6 +13,7 @@ enum ShowcaseRenderer {
         try renderIntegrity(to: dir.appendingPathComponent("integrity.png"))
         try renderUsage(to: dir.appendingPathComponent("usage.png"))
         try renderWorktrees(to: dir.appendingPathComponent("worktrees.png"))
+        try renderInsights(to: dir.appendingPathComponent("insights.png"))
     }
 
     /// Synthetic worktree audit covering all four tiers.
@@ -70,6 +71,10 @@ enum ShowcaseRenderer {
                           detail: "present", lastModified: nil, status: .unchanged),
             IntegrityItem(id: "pl", category: .agentConfig, label: "~/.claude/plugins",
                           detail: "3 plugins", lastModified: nil, status: .unchanged),
+            IntegrityItem(id: "mcp", category: .agentConfig, label: "MCP servers",
+                          detail: "2 configured", lastModified: nil, status: .unchanged),
+            IntegrityItem(id: "cx", category: .agentConfig, label: "~/.codex/config.toml + hooks.json",
+                          detail: "hooks present · trusted", lastModified: nil, status: .unchanged),
             IntegrityItem(id: "cm", category: .memory, label: "Project CLAUDE.md / AGENTS.md",
                           detail: "5 across active projects", lastModified: nil, status: .changedRecently),
             IntegrityItem(id: "mem", category: .memory, label: "~/.claude/memory",
@@ -84,11 +89,11 @@ enum ShowcaseRenderer {
     private static func renderIntegrity(to url: URL) throws {
         let model = IntegrityModel()
         model.injectSnapshot(demoIntegritySnapshot())
-        // All showcase shots share a 760pt output width so galleries can
-        // display them at one uniform size without per-image caps.
-        let size = CGSize(width: 720, height: 430)
+        // Canvas matches the worktrees shot exactly (760x520 with margins) so
+        // the two sit in one gallery row at equal height and column width.
+        let size = CGSize(width: 720, height: 480)
         let view = IntegrityView(model: model, renderStatic: true)
-            .frame(width: 680, height: 390, alignment: .top)
+            .frame(width: 680, height: 440, alignment: .top)
             .frame(width: size.width, height: size.height, alignment: .top)
             .padding(20)
             .background(
@@ -228,6 +233,57 @@ enum ShowcaseRenderer {
                 LinearGradient(colors: [Color(red: 0.12, green: 0.13, blue: 0.22),
                                         Color(red: 0.05, green: 0.05, blue: 0.09)],
                                startPoint: .top, endPoint: .bottom))
+            .environment(\.colorScheme, .dark)
+
+        try writePNG(view, size: size, to: url)
+    }
+
+    // MARK: - Insights window
+
+    /// Synthetic past-24h detection metadata: a burst on the api-server
+    /// session, an older Codex credential read, and background cautions —
+    /// aggregated through the real Insights pipeline so buckets, ordering,
+    /// and labels match what the window computes from SQLite.
+    static func demoInsightsSnapshot(now: Date = Date()) -> DetectionInsightsSnapshot {
+        func row(_ eventID: String, _ hoursAgo: Double, _ agent: AgentKind,
+                 _ session: String, _ tool: String, _ risk: RiskLevel,
+                 _ code: String, _ level: RiskLevel) -> DetectionInsightsSourceRow {
+            DetectionInsightsSourceRow(
+                eventID: eventID,
+                observedAt: now.addingTimeInterval(-hoursAgo * 3600),
+                agent: agent, sessionID: session, toolName: tool,
+                riskLevel: risk, findingCode: code, findingLevel: level)
+        }
+        let api = "0f47a2c9-8f4e-4f6a-b0d3-2d9c51e7aa41"
+        let data = "5a19e7d4-63bb-4c21-9e5a-0c7f4b8812df"
+        let rows = [
+            row("e1", 1.4, .claude, api, "Bash", .danger, "pipe-to-shell", .danger),
+            row("e1", 1.4, .claude, api, "Bash", .danger, "privilege-escalation", .danger),
+            row("e2", 1.6, .claude, api, "Bash", .caution, "force-push", .caution),
+            row("e3", 4.5, .claude, api, "Edit", .caution, "memory-pollution", .caution),
+            row("e4", 8.2, .claude, api, "Bash", .caution, "destructive-delete", .caution),
+            row("e5", 12.3, .codex, data, "shell", .danger, "credential-access", .danger),
+            row("e6", 12.8, .codex, data, "shell", .caution, "insecure-url", .caution),
+            row("e7", 21.5, .codex, data, "shell", .caution, "destructive-delete", .caution),
+        ]
+        return DetectionInsightsSnapshot.aggregate(
+            rows: rows, range: .hours24, now: now, calendar: Calendar.current)
+    }
+
+    private static func renderInsights(to url: URL) throws {
+        // The store is never opened: injectSnapshot short-circuits refresh(),
+        // so this render touches no SQLite file.
+        let model = InsightsModel(store: DetectionStore())
+        model.injectSnapshot(demoInsightsSnapshot())
+
+        // Width is chosen so the aspect ratio equals the usage shot's
+        // (760x780): the two share a gallery row at equal height and column
+        // width. The window is resizable in the app, so the wide layout is
+        // exactly what a user would see.
+        let size = CGSize(width: 1091, height: 1120)
+        let view = InsightsView(model: model, renderStatic: true)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, .dark)
 
         try writePNG(view, size: size, to: url)
