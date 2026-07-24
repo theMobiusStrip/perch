@@ -419,6 +419,13 @@ final class InsightsModel: ObservableObject {
         self.store = store
     }
 
+    /// Showcase support: adopt a prebuilt snapshot without touching the store.
+    func injectSnapshot(_ snap: DetectionInsightsSnapshot) {
+        generation += 1  // invalidate any in-flight refresh
+        snapshot = snap
+        state = .loaded
+    }
+
     func refresh(now: Date = Date()) {
         generation += 1
         let requestGeneration = generation

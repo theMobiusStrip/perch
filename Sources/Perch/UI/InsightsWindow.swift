@@ -42,6 +42,7 @@ private struct InsightsTimelinePoint: Identifiable {
 
 struct InsightsView: View {
     @ObservedObject var model: InsightsModel
+    var renderStatic = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,18 +76,44 @@ struct InsightsView: View {
                     .controlSize(.small)
                     .accessibilityLabel("Loading Insights")
             }
-            Picker("Time range", selection: $model.selectedRange) {
-                ForEach(InsightsRange.allCases) { range in
-                    Text(range.rawValue)
-                        .tag(range)
-                        .accessibilityLabel(range.accessibilityLabel)
+            if renderStatic {
+                staticRangePicker
+            } else {
+                Picker("Time range", selection: $model.selectedRange) {
+                    ForEach(InsightsRange.allCases) { range in
+                        Text(range.rawValue)
+                            .tag(range)
+                            .accessibilityLabel(range.accessibilityLabel)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 180)
             Button("Refresh") { model.refresh() }
                 .disabled(model.state == .loading)
         }
+    }
+
+    /// ImageRenderer draws the AppKit-bridged segmented Picker as a missing-
+    /// view placeholder, so showcase renders draw this SwiftUI stand-in.
+    private var staticRangePicker: some View {
+        HStack(spacing: 2) {
+            ForEach(InsightsRange.allCases) { range in
+                Text(range.rawValue)
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(range == model.selectedRange
+                                  ? Color.white.opacity(0.22)
+                                  : Color.clear))
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.black.opacity(0.28)))
     }
 
     @ViewBuilder
@@ -94,22 +121,12 @@ struct InsightsView: View {
         if model.state == .unavailable {
             unavailableState
         } else if let snapshot = model.snapshot {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    summary(snapshot)
-                    timeline(snapshot)
-                    if snapshot.isEmpty {
-                        emptyState
-                    } else {
-                        findings(snapshot)
-                        HStack(alignment: .top, spacing: 14) {
-                            agents(snapshot)
-                            tools(snapshot)
-                        }
-                        sessions(snapshot)
-                    }
+            if renderStatic {
+                contentBody(snapshot)
+            } else {
+                ScrollView {
+                    contentBody(snapshot)
                 }
-                .padding(16)
             }
         } else {
             centeredState(
@@ -117,6 +134,24 @@ struct InsightsView: View {
                 title: "Loading local detections…",
                 detail: "Reading retained metadata from Perch’s local SQLite store.")
         }
+    }
+
+    private func contentBody(_ snapshot: DetectionInsightsSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            summary(snapshot)
+            timeline(snapshot)
+            if snapshot.isEmpty {
+                emptyState
+            } else {
+                findings(snapshot)
+                HStack(alignment: .top, spacing: 14) {
+                    agents(snapshot)
+                    tools(snapshot)
+                }
+                sessions(snapshot)
+            }
+        }
+        .padding(16)
     }
 
     private func summary(_ snapshot: DetectionInsightsSnapshot) -> some View {
@@ -325,17 +360,11 @@ struct InsightsView: View {
                 .font(.system(size: 11, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(session.findings) { finding in
-                        Text("\(finding.code) ×\(finding.count)")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundStyle(severityColor(finding.level))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                Capsule().fill(severityColor(finding.level).opacity(0.10)))
-                    }
+            if renderStatic {
+                findingChips(session)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    findingChips(session)
                 }
             }
         }
@@ -345,6 +374,20 @@ struct InsightsView: View {
             "\(session.agent.insightsDisplayName) session \(session.sessionID), "
                 + "\(session.detectionCount) detections, "
                 + "highest severity \(session.highestLevel.label)")
+    }
+
+    private func findingChips(_ session: DetectionSessionAggregate) -> some View {
+        HStack(spacing: 5) {
+            ForEach(session.findings) { finding in
+                Text("\(finding.code) ×\(finding.count)")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(severityColor(finding.level))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().fill(severityColor(finding.level).opacity(0.10)))
+            }
+        }
     }
 
     private var emptyState: some View {

@@ -65,9 +65,11 @@ and what they've **left behind**:
 | 🪶 **Zero footprint** | No third-party dependencies or telemetry, and an auditable all-Swift codebase using macOS's system SQLite for minimal local detection metadata. If Perch dies, your agents don't even notice. |
 
 <details>
-<summary><b>🧭 Footholds · 🌳 Worktrees · 📊 token dashboard screenshots</b></summary>
+<summary><b>🧭 Footholds · 🔎 Insights · 🌳 Worktrees · 📊 token dashboard screenshots</b></summary>
 <div align="center">
 <img src="docs/img/integrity.png" width="560" alt="Footholds page: agent-config, instructions/memory, and system-persistence surfaces with per-item state — a non-Perch hook in settings.json, recently-changed project CLAUDE.md files, LaunchAgents and shell profiles">
+<br><br>
+<img src="docs/img/insights.png" width="640" alt="Insights window: caution and danger totals, a 24-hour stacked detection timeline, findings by stable code, detections by agent and tool, and per-session finding clusters — read locally from the metadata-only detection store">
 <br><br>
 <img src="docs/img/worktrees.png" width="640" alt="Worktrees window: summary tiles for count, total size, and reclaimable bytes; per-project rows with reclaimable / review / active / orphaned tier badges, dirty-file and commits-ahead notes, and a Copy cleanup commands button — read-only, Perch never deletes">
 <br><br>
