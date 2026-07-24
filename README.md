@@ -17,7 +17,7 @@ turns dangerous. Never gets in the way.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Local only](https://img.shields.io/badge/telemetry-zero-brightgreen)](#security-model)
 
-<img src="docs/img/notch.png" width="760" alt="Perch's notch panel: monitoring verified for Claude Code and Codex event delivery, security score 75 (Elevated), a Bash call flagged dangerous, plus live sessions, worktree and token glance lines, and rate-limit gauges">
+<img src="docs/img/notch.png" width="760" alt="Perch's notch panel: monitoring verified for Claude Code and Codex event delivery, security score 75 (Elevated), a Bash call flagged dangerous, live sessions, an Insights shortcut for 24-hour, 7-day, and 30-day trends, worktree and token glance lines, and rate-limit gauges">
 
 </div>
 
