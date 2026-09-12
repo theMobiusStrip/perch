@@ -7,11 +7,20 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - name: Swift version
-        run: swift --version
+      - name: Toolchain diagnostics
+        run: |
+          sw_vers
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
       # Build-free invariant tripwire (bare-^ command anchor, read-only). Fast,
       # so it fails before the expensive compile when an invariant is broken.
       - name: Fitness invariants

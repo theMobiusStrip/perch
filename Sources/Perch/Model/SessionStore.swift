@@ -31,6 +31,11 @@ final class SessionStore: ObservableObject {
         let key = SessionKey(agent: agent, id: id)
         var session = map[key] ?? Session(key: key)
         mutate(&session)
+        if session.sessionEndedByHookAt != nil {
+            session.state = .ended
+            session.isLive = false
+            session.attentionNote = nil
+        }
         map[key] = session
         publish()
     }
@@ -70,17 +75,35 @@ final class SessionStore: ObservableObject {
                 reply(.empty)
                 return
             }
-            route(event: event, payload: payload, agent: env.agent, reply: reply)
+            route(event: event, payload: payload, agent: env.agent,
+                  receivedAt: env.receivedAtMs > 0
+                    ? Date(timeIntervalSince1970: Double(env.receivedAtMs) / 1000) : Date(),
+                  reply: reply)
         }
     }
 
-    private func route(event: HookEventName, payload: HookPayload, agent: AgentKind,
+    private func route(event: HookEventName, payload: HookPayload, agent: AgentKind, receivedAt: Date,
                        reply: @escaping @Sendable (BridgeReply) -> Void) {
         guard let sid = payload.sessionId else {
             reply(.empty)
             return
         }
         let now = Date()
+        // Codex identifies turns. A delayed terminal hook for an older turn
+        // must not stop the newer turn currently shown in the session row.
+        if [.stop, .stopFailure, .interrupt].contains(event),
+           let turnId = payload.turnId,
+           let current = find(agent: agent, id: sid)?.activeTurnId,
+           turnId != current {
+            reply(.empty)
+            return
+        }
+        if [.stop, .stopFailure, .interrupt, .sessionEnd].contains(event),
+           let startedAt = find(agent: agent, id: sid)?.lastTurnStartedAt,
+           receivedAt < startedAt {
+            reply(.empty)
+            return
+        }
         let touch: (inout Session) -> Void = { s in
             s.lastActivity = now
             if let cwd = payload.cwd { s.cwd = cwd }
@@ -93,6 +116,13 @@ final class SessionStore: ObservableObject {
             PerchLog.info("SessionStart \(agent.rawValue):\(sid) cwd=\(payload.cwd ?? "?")", category: "store")
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
+                if let endedAt = s.sessionEndedByHookAt, receivedAt > endedAt,
+                   payload.source != "compact" {
+                    s.sessionEndedByHookAt = nil
+                    s.turnEndedByHookAt = nil
+                    s.activeTurnId = nil
+                    s.lastTurnStartedAt = receivedAt
+                }
                 if s.startedAt == nil { s.startedAt = now }
                 if s.state == .unknown || s.state == .ended { s.state = .idle }
             }
@@ -101,18 +131,21 @@ final class SessionStore: ObservableObject {
         case .userPromptSubmit:
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
-                s.state = .executing
-                s.attentionNote = nil
+                guard s.beginTurn(id: payload.turnId, at: receivedAt) else { return }
                 if let prompt = payload.prompt { s.lastPrompt = String(prompt.prefix(200)) }
             }
             reply(.empty)
 
         case .preToolUse:
             let toolName = payload.toolName ?? "tool"
-            let risk = RiskAssessor.assess(agent: agent, toolName: toolName, input: payload.toolInput)
+            let risk = RiskAssessor.assess(agent: agent, toolName: toolName, input: payload.toolInput,
+                                          cwd: payload.cwd ?? find(agent: agent, id: sid)?.cwd)
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
-                s.state = .executing
+                let matchesTurn = payload.turnId == nil || s.activeTurnId == nil || payload.turnId == s.activeTurnId
+                if !payload.isSubagentContext, s.sessionEndedByHookAt == nil, matchesTurn {
+                    s.beginTurn(id: payload.turnId ?? s.activeTurnId, at: receivedAt)
+                }
                 if !risk.isEmpty {
                     s.lastRisk = risk.level
                     s.lastRiskAt = now
@@ -141,7 +174,7 @@ final class SessionStore: ObservableObject {
         case .postToolUse:
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
-                s.state = .executing
+                if !s.turnEndedByHook { s.state = .executing }
                 if let toolUseId = payload.toolUseId {
                     let isError = payload.toolResponse?["is_error"]?.boolValue
                         ?? payload.toolResponse?["error"].map { !$0.isNull } ?? false
@@ -155,7 +188,7 @@ final class SessionStore: ObservableObject {
             // longer fires for them, so this is the only completion signal.
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
-                s.state = .executing
+                if !s.turnEndedByHook { s.state = .executing }
                 if let toolUseId = payload.toolUseId {
                     s.completeTimelineEvent(id: toolUseId, at: now, isError: true)
                 }
@@ -164,7 +197,8 @@ final class SessionStore: ObservableObject {
 
         case .permissionRequest:
             let toolName = payload.toolName ?? "tool"
-            let risk = RiskAssessor.assess(agent: agent, toolName: toolName, input: payload.toolInput)
+            let risk = RiskAssessor.assess(agent: agent, toolName: toolName, input: payload.toolInput,
+                                          cwd: payload.cwd ?? find(agent: agent, id: sid)?.cwd)
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
                 s.state = .waitingPermission
@@ -202,8 +236,14 @@ final class SessionStore: ObservableObject {
             reply(.empty)
 
         case .stop:
+            guard !payload.isSubagentContext,
+                  find(agent: agent, id: sid)?.turnEndedByHook != true else {
+                reply(.empty)
+                return
+            }
             upsert(agent: agent, id: sid) { s in
                 touch(&s)
+                s.turnEndedByHookAt = receivedAt
                 s.state = .idle
                 s.attentionNote = nil
                 if let msg = payload.lastAssistantMessage {
@@ -212,6 +252,40 @@ final class SessionStore: ObservableObject {
             }
             if let session = find(agent: agent, id: sid), !payload.stopHookActive {
                 onTaskComplete?(session, payload.lastAssistantMessage)
+            }
+            reply(.empty)
+
+        case .stopFailure:
+            let error = payload.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let reason = "API error: " + String((error.isEmpty ? "unknown" : error).prefix(120))
+            upsert(agent: agent, id: sid) { s in
+                touch(&s)
+                s.appendTimeline(ToolEvent(
+                    id: UUID().uuidString, name: "error",
+                    summary: payload.isSubagentContext ? "Subagent \(reason)" : reason,
+                    startedAt: now, endedAt: now, isError: true, isNote: true))
+                if !payload.isSubagentContext {
+                    s.turnEndedByHookAt = receivedAt
+                    s.state = .waitingInput
+                    s.attentionNote = reason
+                }
+            }
+            if !payload.isSubagentContext, let session = find(agent: agent, id: sid),
+               session.state != .ended {
+                onAttention?(session, reason)
+            }
+            reply(.empty)
+
+        case .interrupt:
+            guard !payload.isSubagentContext else { reply(.empty); return }
+            upsert(agent: agent, id: sid) { s in
+                touch(&s)
+                s.turnEndedByHookAt = receivedAt
+                s.state = .idle
+                s.attentionNote = nil
+                s.appendTimeline(ToolEvent(
+                    id: UUID().uuidString, name: "interrupt", summary: "Turn interrupted",
+                    startedAt: now, endedAt: now, isNote: true))
             }
             reply(.empty)
 
@@ -243,11 +317,14 @@ final class SessionStore: ObservableObject {
             reply(.empty)
 
         case .sessionEnd:
+            guard !payload.isSubagentContext else { reply(.empty); return }
             PerchLog.info("SessionEnd \(agent.rawValue):\(sid)", category: "store")
             let key = SessionKey(agent: agent, id: sid)
             riskFeed?.dismissAll(for: key)
             upsert(agent: agent, id: sid) { s in
                 s.lastActivity = now
+                s.sessionEndedByHookAt = receivedAt
+                s.turnEndedByHookAt = receivedAt
                 s.state = .ended
                 s.isLive = false
                 s.attentionNote = nil
@@ -359,13 +436,13 @@ final class SessionStore: ObservableObject {
     /// Codex has no pid registry; the rollout tailer infers liveness.
     func setCodexLive(id: String, live: Bool) {
         guard var s = map[SessionKey(agent: .codex, id: id)] else { return }
-        s.isLive = live
+        s.isLive = live && s.sessionEndedByHookAt == nil
         if !live, s.state != .ended { s.state = .idle }
         map[s.key] = s
         publish()
     }
 
-    /// Codex has no SessionEnd event. Once its rollout is no longer fresh the
+    /// Without an explicit SessionEnd, once a rollout is no longer fresh the
     /// row drops out of published UI immediately, while this longer retention
     /// preserves metadata if the same thread resumes. Truly dormant entries
     /// are then removed from the backing map.

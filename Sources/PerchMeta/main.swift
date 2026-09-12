@@ -117,6 +117,44 @@ for cmd in corpus {
     }
 }
 
+// Patch targets are a separate input grammar: command-only transforms cannot
+// detect lost file headers or accidental scoring of source text as a command.
+func assessPatch(_ patch: String) -> RiskLevel {
+    RiskAssessor.assess(agent: .codex, toolName: "apply_patch",
+                        input: .object(["command": .string(patch)]), cwd: "/workspace").level
+}
+
+let patches = [
+    "*** Add File: src.txt\n+ordinary",
+    "*** Update File: .codex/hooks.json\n@@\n-old\n+new",
+    "*** Delete File: .ssh/config",
+    "*** Update File: src.txt\n*** Move to: .codex/config.toml\n@@\n-old\n+new",
+].map { "*** Begin Patch\n\($0)\n*** End Patch" }
+let patchInvariants: [(String, (String) -> String)] = [
+    ("patch-crlf", { $0.replacingOccurrences(of: "\n", with: "\r\n") }),
+    ("patch-outer-whitespace", { " \n" + $0 + "\n\t" }),
+    ("patch-legacy-wrapper", { "<<'EOF'\n" + $0 + "\nEOF" }),
+    ("patch-wrapper-crlf", { ("<<EOF\n" + $0 + "\nEOF").replacingOccurrences(of: "\n", with: "\r\n") }),
+]
+for patch in patches {
+    let base = assessPatch(patch)
+    for (name, transform) in patchInvariants {
+        let out = transform(patch)
+        let level = assessPatch(out)
+        if level != base {
+            violations.append(Violation(kind: level < base ? "monotone" : "invariant",
+                                        transform: name, base: patch, transformed: out, from: base, to: level))
+        }
+    }
+    let out = patch.replacingOccurrences(of: "*** End Patch",
+                                         with: "*** Delete File: .codex/hooks.json\n*** End Patch")
+    let level = assessPatch(out)
+    if level < base {
+        violations.append(Violation(kind: "monotone", transform: "patch-add-sensitive-target",
+                                    base: patch, transformed: out, from: base, to: level))
+    }
+}
+
 // MARK: - Report
 
 func short(_ s: String) -> String {
@@ -126,6 +164,7 @@ func short(_ s: String) -> String {
 
 let tested = corpus.count
 print("metamorphic: \(tested) commands x \(monotone.count + invariant.count) transforms")
+print("metamorphic: \(patches.count) patches x \(patchInvariants.count + 1) transforms")
 if violations.isEmpty {
     print("PASS — no relation violations")
     exit(0)

@@ -14,8 +14,10 @@ final class UsageStore: ObservableObject {
 
     @Published private(set) var claudeFiveHour: RateWindow?
     @Published private(set) var claudeSevenDay: RateWindow?
-    @Published private(set) var codexPrimary: RateWindow?
-    @Published private(set) var codexSecondary: RateWindow?
+    @Published private var codexWindows: (primary: RateWindow?, secondary: RateWindow?) = (nil, nil)
+    var codexPrimary: RateWindow? { codexWindows.primary }
+    var codexSecondary: RateWindow? { codexWindows.secondary }
+    private var codexUpdatedAt: Date?
 
     /// (gauge label, used percentage) — fired once when crossing the threshold.
     var onThreshold: ((String, Double) -> Void)?
@@ -38,14 +40,25 @@ final class UsageStore: ObservableObject {
 
     // MARK: - Codex (token_count event payload)
 
-    func applyCodexRateLimits(_ payload: JSONValue) {
-        let limits = payload["rate_limits"]
-        if let window = Self.parseWindow(limits?["primary"]) {
-            codexPrimary = window
+    func applyCodexRateLimits(_ payload: JSONValue, observedAt: Date? = nil) {
+        guard let limits = payload["rate_limits"]?.objectValue else { return }
+        // The general Codex gauges exclude model-specific quota buckets.
+        // Older rollouts omit the id or encode it as null for the codex bucket.
+        if let id = limits["limit_id"], !id.isNull, id.string != "codex" { return }
+
+        let updatedAt = observedAt ?? Date()
+        if let codexUpdatedAt, updatedAt < codexUpdatedAt { return }
+        let primary = Self.parseWindow(limits["primary"], observedAt: updatedAt)
+        let secondary = Self.parseWindow(limits["secondary"], observedAt: updatedAt)
+        if let value = limits["primary"], !value.isNull, primary == nil { return }
+        if let value = limits["secondary"], !value.isNull, secondary == nil { return }
+        self.codexUpdatedAt = updatedAt
+        // Each identified snapshot replaces both windows, including unavailable ones.
+        codexWindows = (primary, secondary)
+        if let window = primary {
             checkThreshold(label: "Codex 5h", window: window)
         }
-        if let window = Self.parseWindow(limits?["secondary"]) {
-            codexSecondary = window
+        if let window = secondary {
             checkThreshold(label: "Codex weekly", window: window)
         }
     }
@@ -54,7 +67,7 @@ final class UsageStore: ObservableObject {
 
     /// Tolerates both naming families: `used_percentage`/`used_percent`,
     /// `resets_at` (unix seconds or ISO8601 string) / `resets_in_seconds`.
-    static func parseWindow(_ json: JSONValue?) -> RateWindow? {
+    static func parseWindow(_ json: JSONValue?, observedAt: Date = Date()) -> RateWindow? {
         guard let json, !json.isNull else { return nil }
         guard let pct = json.first(of: ["used_percentage", "used_percent"])?.double else { return nil }
         var resetsAt: Date?
@@ -69,11 +82,11 @@ final class UsageStore: ObservableObject {
                     ?? { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f.date(from: s) }()
             }
         } else if let secs = json["resets_in_seconds"]?.double {
-            resetsAt = Date().addingTimeInterval(secs)
+            resetsAt = observedAt.addingTimeInterval(secs)
         }
         let windowMinutes = json["window_minutes"]?.int
         return RateWindow(usedPercentage: pct, resetsAt: resetsAt,
-                          windowMinutes: windowMinutes, updatedAt: Date())
+                          windowMinutes: windowMinutes, updatedAt: observedAt)
     }
 
     private func checkThreshold(label: String, window: RateWindow) {

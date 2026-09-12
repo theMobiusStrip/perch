@@ -7,6 +7,19 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 ### Added
 
 - Added an Insights screenshot to the README showcase.
+- Added Claude terminal-failure and compaction events, plus Codex interruption
+  and session-end tracking.
+- Added compatibility checks across supported macOS generations.
+
+### Fixed
+
+- Score sensitive file targets in Codex patches, including relative paths,
+  deletions, and rename destinations, without treating patch contents as commands.
+- Verify current hook identities and enabled state across desktop and CLI
+  runtimes instead of relying on stored trust-record counts.
+- Keep terminal failure and session-end state from being undone by late events.
+- Isolate general Codex quota snapshots from other limits and older replayed
+  records, clearing unavailable windows without mixing snapshots.
 
 ## [1.6.0] - 2026-07-23
 

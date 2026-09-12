@@ -182,6 +182,13 @@ trusted before it will run them; the installer records that trust automatically
 CLI), the install report says so — run `/hooks` once in the terminal `codex`
 TUI instead (the desktop app has no `/hooks` command).
 
+Coverage is checked separately for detected desktop and CLI runtimes. An older
+CLI can have working tool-risk hooks but limited lifecycle coverage; upgrading
+it and repairing Codex monitoring may be necessary even when the desktop app
+is current. Stored trust records alone do not prove that hooks can run.
+Codex rate-limit gauges show the general Codex quota only, not model-specific
+quota buckets. An unavailable window is hidden rather than carried forward.
+
 **5.** In **Monitoring Setup…**, allow notifications and choose which event
 categories should interrupt you. To keep alerts visible but silent
 (recommended — you want to *see* them, not get pinged on every flag), turn
@@ -190,7 +197,10 @@ macOS banner style and permission.
 
 ### Option 2 — Build from source
 
-Any Swift toolchain works (CommandLineTools is enough — no Xcode needed):
+Use Swift 6 or newer with a matching macOS SDK. Command Line Tools are sufficient
+when their compiler and SDK plugins are complete; CI also verifies full Xcode
+toolchains on macOS 14, 15, and 26. If an SDK cannot load its macro plugins,
+check the compiler/SDK installation before changing Perch's deployment target.
 
 ```sh
 git clone https://github.com/theMobiusStrip/perch && cd perch

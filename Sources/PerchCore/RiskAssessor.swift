@@ -85,7 +85,8 @@ public enum RiskAssessor {
         })
     }
 
-    public static func assess(agent: AgentKind, toolName: String, input: JSONValue?) -> RiskAssessment {
+    public static func assess(agent: AgentKind, toolName: String, input: JSONValue?,
+                              cwd: String? = nil) -> RiskAssessment {
         var findings: [RiskFinding] = []
         let tool = toolName.lowercased()
 
@@ -97,6 +98,19 @@ public enum RiskAssessor {
         // File writes to sensitive locations (Write/Edit and friends).
         if isWriteTool(tool), let path = input?.first(of: ["file_path", "path", "notebook_path"])?.string {
             findings.append(contentsOf: assessWritePath(path))
+        }
+
+        // Codex's hook payload carries the patch in tool_input.command, not
+        // file_path. Score every affected target, including rename sources.
+        if tool == "apply_patch", let patch = input?["command"]?.string {
+            for target in PatchTargets.parse(patch) {
+                let path = PatchTargets.resolve(target.path, cwd: cwd)
+                findings.append(contentsOf: assessWritePath(path).map { finding in
+                    guard target.removesFile else { return finding }
+                    return RiskFinding(level: finding.level, code: finding.code,
+                                       message: "Deletes or moves a sensitive file (\(finding.code))")
+                })
+            }
         }
 
         // Network-fetch tools reaching non-obvious hosts.

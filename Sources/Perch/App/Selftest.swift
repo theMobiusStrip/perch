@@ -44,6 +44,7 @@ enum Selftest {
         parseWindowMillisecondHeuristic(t)
         parseWindowRejectsUnusableInput(t)
         applyClaudeStatuslineAndCodexRateLimits(t)
+        quotaCompatibility(t)
         securityPostureScoring(t)
         riskFeedAddsFlaggedAndSkipsSafe(t)
         riskFeedDedupesSameCall(t)
@@ -70,6 +71,7 @@ enum Selftest {
         handleEnvelopePostureCountsEachCallOnce(t)
         handleEnvelopeSessionEndClearsFeed(t)
         handleEnvelopeToleratesUnknownEventAndMissingSessionId(t)
+        runLifecycleCompatibilityTests(t)
 
         // UsageHistory aggregator
         usageAggregatorDedupesClaudeLines(t)
@@ -86,6 +88,7 @@ enum Selftest {
         riskFlagsAgentConfigAndMemoryPollution(t)
         riskIgnoresMentionsAndFixtures(t)
         riskCatchesEvasion(t)
+        patchCompatibility(t)
         integrityScannerClassifiesSurface(t)
         integrityAckAndOwnership(t)
 
@@ -104,6 +107,7 @@ enum Selftest {
         codexTrustRequestShapes(t)
         codexTrustSummarizesHooksList(t)
         codexTrustEventNamesAndConfigScan(t)
+        codexCompatibility(t)
 
         print("selftest: \(t.passed) passed, \(t.failed) failed")
         return t.failed
@@ -113,7 +117,7 @@ enum Selftest {
 // MARK: - Check helpers (local stand-ins for the XCTest APIs)
 
 @MainActor
-private final class Checker {
+final class Checker {
     private(set) var passed = 0
     private(set) var failed = 0
     private var prefix = ""

@@ -165,9 +165,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Existing configured users are not interrupted on upgrade. A fresh
         // install with no working integration gets the guided setup once.
+        // Existing registrations suppress onboarding even when a newer
+        // runtime needs repair. Monitoring health reports actual coverage.
         let hasExistingIntegration = ClaudeHookInstaller.installationStatus().isReady
-            || (CodexHookInstaller.installationStatus().isReady
-                && (CodexHookTrust.storedTrustRecordCount() ?? 0) > 0)
+            || CodexHookInstaller.installationStatus().wiredEvents > 0
         if !config.hasCompletedSetup && !hasExistingIntegration {
             DispatchQueue.main.async { [weak self] in self?.openSetupWindow() }
         }
