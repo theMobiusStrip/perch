@@ -11,13 +11,12 @@ enum CodexHookInstaller {
         PerchPaths.codexHomeDir.appendingPathComponent("hooks.json")
     }
 
-    /// Claude's event list minus Notification/SessionEnd, plus PostCompact.
     private static let asyncEvents: [HookEventName] = [
         .sessionStart, .userPromptSubmit, .postToolUse, .stop,
-        .subagentStart, .subagentStop, .preCompact, .postCompact,
+        .subagentStart, .subagentStop, .preCompact, .postCompact, .interrupt,
     ]
-    private static let syncEvents: [HookEventName] = [.permissionRequest, .preToolUse]
-    private static var allEvents: [HookEventName] { asyncEvents + syncEvents }
+    private static let syncEvents: [HookEventName] = [.permissionRequest, .preToolUse, .sessionEnd]
+    static var allEvents: [HookEventName] { asyncEvents + syncEvents }
 
     // MARK: - Install
 
@@ -35,6 +34,19 @@ enum CodexHookInstaller {
             matcher: ".*",
             asyncEvents: asyncEvents,
             syncEvents: syncEvents)
+
+        // Codex caps terminal hooks at three seconds, unlike tool hooks.
+        if var hooks = root["hooks"]?.objectValue {
+            for event in [HookEventName.sessionEnd, .interrupt] {
+                let entry = InstallSupport.hookEntry(
+                    command: InstallSupport.hookCommand(bridgePath: bridgePath, agent: .codex),
+                    timeout: 3, isAsync: event == .interrupt)
+                hooks[event.rawValue] = .array(InstallSupport.replacingPerchEntries(
+                    in: hooks[event.rawValue]?.arrayValue ?? [],
+                    with: InstallSupport.matcherGroup(matcher: ".*", entry: entry)))
+            }
+            root["hooks"] = .object(hooks)
+        }
 
         let changed = JSONValue.object(root) != JSONValue.object(file.object)
         var backupPath: String?
@@ -125,43 +137,27 @@ enum CodexHookInstaller {
     /// install notes and the Doctor report.
     static func versionSupportNote() -> String {
         guard let version = detectVersion() else {
-            return "Codex CLI: not found on PATH or common install dirs — hooks will sit dormant until Codex is installed."
+            return "Codex runtime: not found on PATH or in supported app locations — hooks will sit dormant until Codex is installed."
         }
         if isVersion(version, atLeast: [0, 124]) {
-            return "Codex CLI: \(version) — hooks supported (≥0.124)."
+            return "Codex runtime: \(version) — hook support available; event coverage is checked per runtime."
         }
         if isVersion(version, atLeast: [0, 114]) {
-            return "Codex CLI: \(version) — hooks need `hooks = true` under `[features]` in ~/.codex/config.toml (0.114–0.123)."
+            return "Codex runtime: \(version) — hooks need `hooks = true` under `[features]` in config.toml (0.114–0.123)."
         }
-        return "Codex CLI: \(version) — hooks UNSUPPORTED below 0.114; upgrade Codex (only the notify fallback would work)."
+        return "Codex runtime: \(version) — hooks UNSUPPORTED below 0.114; upgrade Codex (only the notify fallback would work)."
     }
 
-    /// Point `process` at the codex CLI with the given arguments — direct
-    /// path when it lives in one of the usual install dirs, otherwise
-    /// /usr/bin/env with an augmented PATH (GUI apps inherit a minimal one).
-    /// Shared by the version probe and the hook-trust app-server transport.
+    /// Version probe uses the first discovered runtime. Trust and coverage
+    /// inspect every discovered runtime using its explicit context.
     static func configureCodexProcess(_ process: Process, arguments: [String]) {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let candidates = [
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex",
-            "\(home)/.local/bin/codex",
-            "\(home)/.cargo/bin/codex",
-            "\(home)/bin/codex",
-            // Codex desktop app bundles the CLI; GUI-launched Perch won't
-            // have it on PATH.
-            "/Applications/Codex.app/Contents/Resources/codex",
-        ]
-        if let direct = candidates.first(where: { fm.isExecutableFile(atPath: $0) }) {
-            process.executableURL = URL(fileURLWithPath: direct)
-            process.arguments = arguments
+        if let runtime = CodexRuntime.discover().first {
+            runtime.configure(process, arguments: arguments)
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = ["codex"] + arguments
             var env = ProcessInfo.processInfo.environment
-            let extra = "/opt/homebrew/bin:/usr/local/bin:\(home)/.local/bin:\(home)/.cargo/bin"
-            env["PATH"] = [env["PATH"], extra].compactMap { $0 }.joined(separator: ":")
+            env["CODEX_HOME"] = PerchPaths.codexHomeDir.path
             process.environment = env
         }
     }

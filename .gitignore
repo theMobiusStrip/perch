@@ -10,3 +10,4 @@ plans/
 .fuzz-progress
 fuzz-crashes/
 .vscode/launch.json
+tools/commitlint/node_modules/

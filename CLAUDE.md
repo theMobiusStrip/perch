@@ -22,8 +22,10 @@ events. SwiftPM only — there is no Xcode project.
   below (bare-`^` command anchor; read-only). Runs in CI before the build and
   as the pre-commit hook; `make hooks` installs the hook (once per clone, since
   git won't auto-run repo hooks).
-- `make verify` — run the complete local gate: fitness, selftest, and
-  metamorphic checks.
+- `make commitlint-test` — exercise the Conventional Commits policy, including
+  range handling and the real-merge exemption.
+- `make verify` — run the complete local gate: fitness, selftest, metamorphic,
+  and commit-policy checks.
 - `make app` — assemble ad-hoc-signed `dist/Perch.app`.
 
 ## Cross-review
@@ -60,8 +62,14 @@ events. SwiftPM only — there is no Xcode project.
 
 ## Conventions
 
-- Commits: imperative subject ≤50 chars; body only when the why isn't
-  obvious. Codex-authored commits end with the official
+- Commits follow Conventional Commits 1.0.0:
+  `<type>[optional scope][!]: <description>`. Use one of `build`, `chore`,
+  `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, or
+  `test`; keep the full header imperative and ≤50 characters. True merge
+  commits (two or more parents) are the only exemption. Run `make hooks` once
+  per clone for local checks; CI validates every authored commit introduced by
+  a PR. Body text is only needed when the why isn't obvious. Codex-authored
+  commits end with the official
   `Co-authored-by: Codex <noreply@openai.com>` trailer, and Codex-authored PRs
   include `Generated with Codex.` exactly once. No process narrative, no
   conversation-context leak (sources, durations, prompts), and no

@@ -93,7 +93,7 @@ final class SetupViewModel: ObservableObject {
                 return report
             } verify: {
                 CodexHookInstaller.installationStatus().isReady
-                    && (CodexHookTrust.storedTrustRecordCount() ?? 0) > 0
+                    && CodexHookTrust.inspect().isReady
             }
         }
     }

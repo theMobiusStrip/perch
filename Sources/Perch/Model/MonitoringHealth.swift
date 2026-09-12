@@ -109,24 +109,9 @@ enum MonitoringInspector {
             detail: "Hooks provide detections; the status line provides Claude usage gauges.")
 
         let codexStatus = CodexHookInstaller.installationStatus()
-        let trustCount = CodexHookTrust.storedTrustRecordCount()
-        let codexState: MonitoringCheckState
-        let codexSummary: String
-        if codexStatus.isReady, (trustCount ?? 0) > 0 {
-            codexState = .ready
-            codexSummary = "Hooks installed and trusted"
-        } else if codexStatus.isReady {
-            codexState = .needsAttention
-            codexSummary = "Hooks installed; trust is missing"
-        } else {
-            codexState = checkState(for: codexStatus.state)
-            codexSummary = codexStatus.summary
-        }
-        let codex = MonitoringCheck(
-            title: "Codex",
-            state: codexState,
-            summary: codexSummary,
-            detail: "Session rollouts may still appear without hooks, but tool-risk coverage needs trusted hooks.")
+        let codex = codexStatus.isReady ? CodexHookTrust.inspect() : MonitoringCheck(
+            title: "Codex", state: checkState(for: codexStatus.state), summary: codexStatus.summary,
+            detail: "Session rollouts may still appear without hooks, but tool-risk coverage needs enabled, trusted hooks.")
 
         return MonitoringSnapshot(bridge: bridge, socket: runtime,
                                   claude: claude, codex: codex)

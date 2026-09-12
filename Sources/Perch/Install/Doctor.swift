@@ -32,8 +32,8 @@ enum Doctor {
         lines.append("Claude rate-limit gauges: populated only by the statusline payload, which "
             + "Claude Code renders in terminal sessions — the desktop app never invokes it. "
             + "Token usage totals come from transcripts and work for all session types.")
-        lines.append(CodexHookTrust.doctorLine()
-            + " If Codex hooks are installed but tool calls never surface, missing trust is why.")
+        lines.append("Codex coverage is checked against each detected runtime's current hook identities, "
+            + "enabled state, and configuration. Repair in Monitoring Setup when coverage needs attention.")
         lines.append(DetectionStore.diagnosticLine())
         lines.append("Log: \(PerchPaths.logFile.path)")
         return DoctorReport(state: aggregateState(for: checks), checks: checks,

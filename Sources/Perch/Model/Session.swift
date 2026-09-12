@@ -40,6 +40,13 @@ struct Session: Identifiable, Equatable {
     var gitBranch: String?
     var model: String?             // display name preferred
     var state: SessionState = .unknown
+    /// A late async tool result cannot reopen a turn finished by a hook.
+    var turnEndedByHookAt: Date?
+    var turnEndedByHook: Bool { turnEndedByHookAt != nil }
+    var activeTurnId: String?
+    var lastTurnStartedAt: Date?
+    /// Explicit SessionEnd outranks rollout freshness and process polling.
+    var sessionEndedByHookAt: Date?
     var attentionNote: String?     // e.g. Notification message while waiting
     var startedAt: Date?
     var lastActivity: Date = Date()
@@ -88,6 +95,26 @@ struct Session: Identifiable, Equatable {
 extension Session {
     static let timelineCap = 200
     static let riskBadgeTTL: TimeInterval = 5 * 60
+
+    /// A timestamped rollout start can reopen an explicitly ended session only
+    /// when it represents newer activity. Hooks also call this for new prompts.
+    @discardableResult
+    mutating func beginTurn(id: String?, at date: Date) -> Bool {
+        if let startedAt = lastTurnStartedAt, date < startedAt { return false }
+        if let endedAt = sessionEndedByHookAt, date <= endedAt { return false }
+        if let endedAt = turnEndedByHookAt {
+            if date <= endedAt { return false }
+            if let activeTurnId, id == activeTurnId { return false }
+        }
+        activeTurnId = id
+        lastTurnStartedAt = date
+        turnEndedByHookAt = nil
+        sessionEndedByHookAt = nil
+        state = .executing
+        attentionNote = nil
+        isLive = true
+        return true
+    }
 
     /// Row badges are an immediate-attention cue, not a permanent label on a
     /// session. The retained detection history remains available for an hour.

@@ -184,9 +184,7 @@ final class CodexRolloutTailer {
             turnInFlight[line.sessionID] = true
             let contextWindow = event["model_context_window"]?.int
             store.upsert(agent: .codex, id: line.sessionID) { s in
-                s.state = .executing
-                s.attentionNote = nil
-                s.isLive = true
+                guard s.beginTurn(id: event["turn_id"]?.string, at: ts ?? .distantPast) else { return }
                 if let contextWindow { s.contextWindowSize = contextWindow }
                 if s.transcriptPath == nil { s.transcriptPath = line.filePath }
                 if let ts { s.lastActivity = ts }
@@ -246,7 +244,7 @@ final class CodexRolloutTailer {
         let staleReplay = line.isSeed
             && (ts.map { Date().timeIntervalSince($0) > 30 * 60 } ?? true)
         if !staleReplay {
-            usage.applyCodexRateLimits(payload)
+            usage.applyCodexRateLimits(payload, observedAt: ts)
         }
     }
 
