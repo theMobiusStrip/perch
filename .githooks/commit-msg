@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+# Git creates merge subjects; authored commits still go through commitlint.
+if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+  exit 0
+fi
+
+exec "$repo_root/scripts/check-commits.sh" message-file "$1"

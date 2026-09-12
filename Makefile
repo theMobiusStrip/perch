@@ -6,7 +6,10 @@ CONFIG   := release
 # in build-dmg.sh. Empty (no git / no repo) leaves the 0.0.0 dev-build marker.
 GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 
-.PHONY: build app dmg run test clean debug fuzz meta fitness verify hooks
+.PHONY: build app dmg run test clean debug fuzz meta fitness verify hooks \
+	commitlint-install commitlint-test
+
+COMMITLINT := tools/commitlint/node_modules/.bin/commitlint
 
 build:
 	swift build -c $(CONFIG)
@@ -49,13 +52,22 @@ meta:
 fitness:
 	scripts/fitness.sh
 
-verify: fitness test meta
+$(COMMITLINT): tools/commitlint/package.json tools/commitlint/package-lock.json
+	npm ci --prefix tools/commitlint --ignore-scripts
+
+commitlint-install: $(COMMITLINT)
+
+commitlint-test: commitlint-install
+	scripts/test-commit-policy.sh
+
+verify: fitness test meta commitlint-test
 
 # One-time per clone: point git at the tracked hook (git won't auto-run repo
-# hooks on clone, by design). The hook runs `make fitness` before each commit.
-hooks:
+# hooks on clone, by design). The hooks run fitness before each commit and
+# validate its message before Git records it.
+hooks: commitlint-install
 	git config core.hooksPath .githooks
-	@echo "pre-commit hook active (.githooks) — runs scripts/fitness.sh"
+	@echo "tracked hooks active (.githooks) — fitness + commit message checks"
 
 debug:
 	swift build
