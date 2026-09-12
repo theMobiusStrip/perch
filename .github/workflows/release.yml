@@ -27,13 +27,41 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Refuse release overwrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set +e
+          response="$(gh api --include \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            2>&1)"
+          api_exit=$?
+          set -e
+          http_code="$(printf '%s\n' "$response" | awk 'NR == 1 { print $2 }')"
+
+          case "$http_code" in
+            404) ;;
+            200)
+              echo "::error::Release ${RELEASE_TAG} already exists; refusing to overwrite signed artifacts. Delete an unpublished draft before retrying."
+              exit 1
+              ;;
+            *)
+              printf '%s\n' "$response" >&2
+              echo "::error::Could not verify that the release tag is unused (gh exit $api_exit)."
+              exit 1
+              ;;
+          esac
+
       - name: Build app + selftest
         run: |
           make app
           .build/release/Perch --selftest
 
       - name: Build DMG
-        run: SKIP_BUILD=1 scripts/build-dmg.sh "${{ steps.version.outputs.tag }}"
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: SKIP_BUILD=1 scripts/build-dmg.sh "$RELEASE_TAG"
 
       - name: Attest DMG provenance
         uses: actions/attest@v4
@@ -41,11 +69,16 @@ jobs:
           subject-path: dist/Perch-${{ steps.version.outputs.version }}-arm64.dmg
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          # The maintainer's signing key is hardware-backed. Keep the release
+          # private until its checksum signature has been uploaded manually.
+          draft: true
+          fail_on_unmatched_files: true
+          overwrite_files: false
           files: |
-            dist/Perch-*.dmg
-            dist/Perch-*.sha256
+            dist/Perch-${{ steps.version.outputs.version }}-arm64.dmg
+            dist/Perch-${{ steps.version.outputs.version }}-arm64.dmg.sha256
           body: |
             ## Install
 
@@ -62,17 +95,30 @@ jobs:
 
             ## Verify your download
 
-            Download the `.dmg` and `.sha256` files into the same folder.
+            Download the `.dmg`, `.sha256`, and `.sha256.asc` files into the same folder.
 
             **Step 1 — Integrity:** the DMG matches the published checksum
 
             ```sh
             cd ~/Downloads
-            shasum -a 256 --check Perch-*.sha256
+            shasum -a 256 --check "Perch-${{ steps.version.outputs.version }}-arm64.dmg.sha256"
             # expected: Perch-…-arm64.dmg: OK
             ```
 
-            **Step 2 — Origin:** the DMG came from Perch's release workflow and tag
+            **Step 2 — Maintainer signature:** the checksum was signed by Perch's maintainer
+
+            ```sh
+            curl -fsSL https://github.com/theMobiusStrip.gpg | gpg --import
+            gpg --verify \
+              "Perch-${{ steps.version.outputs.version }}-arm64.dmg.sha256.asc" \
+              "Perch-${{ steps.version.outputs.version }}-arm64.dmg.sha256"
+            # expected: Good signature from "Evan Zheng …"
+            ```
+
+            A "not certified with a trusted signature" warning is normal unless you have
+            independently marked the maintainer key as trusted. The signature must still be good.
+
+            **Step 3 — Build provenance:** the DMG came from Perch's release workflow and tag
 
             ```sh
             gh attestation verify "Perch-${{ steps.version.outputs.version }}-arm64.dmg" \

@@ -4,6 +4,11 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 
 ## [Unreleased]
 
+### Changed
+
+- Made tagged builds draft releases until their hardware-signed checksum is
+  uploaded and the release is ready to publish.
+
 ## [1.7.0] - 2026-09-12
 
 ### Added
@@ -14,12 +19,11 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 - Added compatibility checks across supported macOS generations.
 - Added a `Quit Perch` action to the expanded notch.
 - Added Conventional Commits enforcement for local hooks and CI.
-- Added CI-generated build-provenance attestations for release DMGs.
+- Added CI-generated build-provenance attestations for release DMGs alongside
+  detached maintainer signatures for their checksums.
 
 ### Changed
 
-- Replaced detached checksum signatures with release artifact provenance tied
-  to the source repository, workflow, and tag.
 - Updated release setup guidance for Monitoring Setup and Live verification.
 
 ### Fixed

@@ -80,5 +80,7 @@ events. SwiftPM only — there is no Xcode project.
   leak, not just the examples in parentheses.
 - Public repo: never commit or push private data — no PLAN.md, machine
   details, credentials, or internal paths.
-- Releases are built by CI from `v*` tags (`release.yml`); never hand-build
-  or re-sign release artifacts locally.
+- Releases are built by CI from `v*` tags (`release.yml`) as drafts. Verify the
+  CI-built DMG and checksum, hardware-sign only that checksum, upload the
+  `.sha256.asc`, and publish only after all three assets are present. Never
+  hand-build or re-sign the DMG locally.
