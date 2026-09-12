@@ -216,27 +216,29 @@ dist/Perch.app/Contents/MacOS/Perch --install-codex-hooks
 
 ### Verify your download *(optional, recommended)*
 
-Every release ships a `.sha256` checksum and a `.sha256.asc` GPG signature.
-Download all three files into the same folder, then:
+Starting with v1.7.0, every release ships a `.sha256` checksum and a GitHub
+Actions build-provenance attestation. Download the `.dmg` and `.sha256` files
+into the same folder, then:
 
 ```sh
 cd ~/Downloads
+PERCH_VERSION=1.7.0
 
 # Step 1 — Integrity: the DMG matches the published checksum
 shasum -a 256 --check Perch-*.sha256
 #   → Perch-x.y.z-arm64.dmg: OK
 
-# Step 2 — Origin: the checksum was signed by the maintainer's key
-curl -fsSL https://github.com/theMobiusStrip.gpg | gpg --import
-gpg --verify Perch-*.sha256.asc Perch-*.sha256
-#   → Good signature
+# Step 2 — Origin: the DMG came from Perch's release workflow and tag
+gh attestation verify "Perch-${PERCH_VERSION}-arm64.dmg" \
+  --repo theMobiusStrip/perch \
+  --signer-workflow theMobiusStrip/perch/.github/workflows/release.yml \
+  --source-ref "refs/tags/v${PERCH_VERSION}"
 ```
 
-gpg's *"not certified with a trusted signature"* warning is normal — the
-signature is valid; gpg is noting you haven't personally marked the key as
-trusted. It's the same key that signs this repo's release tags — check with
-`git tag -v v0.3.0`. Don't want to trust a prebuilt binary at all? Use
-Option 2 — it's two commands.
+The provenance check requires the [GitHub CLI](https://cli.github.com/).
+Set `PERCH_VERSION` to the downloaded release version. Don't want to trust a
+prebuilt binary at all? Use Option 2 — it's two commands. For earlier releases,
+follow the verification instructions on that release's page.
 
 ## How it works
 

@@ -4,12 +4,23 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-12
+
 ### Added
 
 - Added an Insights screenshot to the README showcase.
 - Added Claude terminal-failure and compaction events, plus Codex interruption
   and session-end tracking.
 - Added compatibility checks across supported macOS generations.
+- Added a `Quit Perch` action to the expanded notch.
+- Added Conventional Commits enforcement for local hooks and CI.
+- Added CI-generated build-provenance attestations for release DMGs.
+
+### Changed
+
+- Replaced detached checksum signatures with release artifact provenance tied
+  to the source repository, workflow, and tag.
+- Updated release setup guidance for Monitoring Setup and Live verification.
 
 ### Fixed
 
@@ -111,7 +122,8 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 - Closed leading-whitespace command-anchor detection bypasses.
 - Bounded memory use while scanning token-usage files.
 
-[Unreleased]: https://github.com/theMobiusStrip/perch/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/theMobiusStrip/perch/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/theMobiusStrip/perch/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/theMobiusStrip/perch/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/theMobiusStrip/perch/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/theMobiusStrip/perch/compare/v1.3.0...v1.4.0
