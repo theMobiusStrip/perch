@@ -39,6 +39,7 @@ final class NotchController {
     private let openInsights: () -> Void
     private let openSetup: () -> Void
     private let openRecentDetections: () -> Void
+    private let quit: () -> Void
 
     private let state = NotchViewState()
     private var panel: NotchPanel?
@@ -61,7 +62,8 @@ final class NotchController {
          openUsageHistory: @escaping () -> Void,
          openInsights: @escaping () -> Void,
          openSetup: @escaping () -> Void,
-         openRecentDetections: @escaping () -> Void) {
+         openRecentDetections: @escaping () -> Void,
+         quit: @escaping () -> Void) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
@@ -75,6 +77,7 @@ final class NotchController {
         self.openInsights = openInsights
         self.openSetup = openSetup
         self.openRecentDetections = openRecentDetections
+        self.quit = quit
         state.controller = self
     }
 
@@ -209,7 +212,8 @@ final class NotchController {
                                  openUsageHistory: openUsageHistory,
                                  openInsights: openInsights,
                                  openSetup: openSetup,
-                                 openRecentDetections: openRecentDetections)
+                                 openRecentDetections: openRecentDetections,
+                                 quit: quit)
         let hosting = NotchHostingView(rootView: root)
         hosting.sizingOptions = []  // window frame is static; never autosize
         hosting.frame = NSRect(origin: .zero, size: geo.windowFrame.size)

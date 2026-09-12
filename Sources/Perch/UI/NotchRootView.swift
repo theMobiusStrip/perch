@@ -22,6 +22,7 @@ struct NotchRootView: View {
     let openInsights: () -> Void
     let openSetup: () -> Void
     let openRecentDetections: () -> Void
+    let quit: () -> Void
     /// Showcase renders swap the ScrollView for a plain stack: ImageRenderer
     /// (the vector-crisp rasterizer) skips ScrollView contents entirely.
     var renderStatic = false
@@ -112,7 +113,7 @@ struct NotchRootView: View {
             if !riskFeed.isEmpty {
                 RiskCardView(feed: riskFeed, renderStatic: renderStatic)
             }
-            pageSwitcher
+            navigationRow
             Group {
                 if state.page == .sessions {
                     sessionList
@@ -151,7 +152,15 @@ struct NotchRootView: View {
         }
     }
 
-    // MARK: - Page switcher (Sessions | Integrity)
+    // MARK: - Navigation (Sessions | Integrity, Quit)
+
+    private var navigationRow: some View {
+        HStack(spacing: 8) {
+            pageSwitcher
+            Spacer(minLength: 8)
+            quitButton
+        }
+    }
 
     private var pageSwitcher: some View {
         HStack(spacing: 2) {
@@ -160,6 +169,22 @@ struct NotchRootView: View {
         }
         .padding(2)
         .background(Capsule().fill(Color.white.opacity(0.07)))
+    }
+
+    private var quitButton: some View {
+        Button(action: quit) {
+            Label("Quit Perch", systemImage: "power")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5.5)
+                .background(Capsule().fill(Color.white.opacity(0.07)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Quit Perch")
+        .accessibilityHint("Stops monitoring and quits Perch")
+        .help("Quit Perch")
     }
 
     private func pageTab(_ title: String, _ page: NotchPage, badge: Int) -> some View {
