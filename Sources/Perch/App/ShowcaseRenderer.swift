@@ -222,7 +222,7 @@ enum ShowcaseRenderer {
                                  usageHistory: usageHistory, integrity: integrity,
                                  worktrees: worktrees, openWorktrees: {},
                                  openUsageHistory: {}, openInsights: {}, openSetup: {},
-                                 openRecentDetections: {}, renderStatic: true)
+                                 openRecentDetections: {}, quit: {}, renderStatic: true)
             .frame(width: state.expandedSize.width, height: state.expandedSize.height)
             // ImageRenderer otherwise lets the shell negotiate up to the
             // proposed canvas; fixedSize pins it to the frame above so the

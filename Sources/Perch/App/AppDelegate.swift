@@ -133,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         worktreeModel.liveCwdsProvider = { [weak self] in
             Set(self?.sessionStore.sessions.filter(\.isLive).compactMap { $0.cwd } ?? [])
         }
+        let actions = makeActions()
         let notchController = NotchController(sessions: sessionStore, usage: usageStore,
                                               riskFeed: riskFeed, posture: securityPosture,
                                               health: monitoringHealth,
@@ -142,7 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
                                               openInsights: { [weak self] in self?.openInsightsWindow() },
                                               openSetup: { [weak self] in self?.openSetupWindow() },
-                                              openRecentDetections: { [weak self] in self?.openRecentDetectionsWindow() })
+                                              openRecentDetections: { [weak self] in self?.openRecentDetectionsWindow() },
+                                              quit: actions.quit)
         notchController.show()
         notch = notchController
 
@@ -151,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                           health: monitoringHealth,
                                           updateChecker: updateChecker,
                                           worktrees: worktreeModel,
-                                          actions: makeActions())
+                                          actions: actions)
 
         wireCrossCutting()
 
