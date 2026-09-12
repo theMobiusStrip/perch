@@ -6,19 +6,26 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-dmg:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Swift version
         run: swift --version
 
       - name: Extract version
         id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build app + selftest
         run: |
@@ -28,13 +35,17 @@ jobs:
       - name: Build DMG
         run: SKIP_BUILD=1 scripts/build-dmg.sh "${{ steps.version.outputs.tag }}"
 
+      - name: Attest DMG provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/Perch-${{ steps.version.outputs.version }}-arm64.dmg
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/Perch-*.dmg
             dist/Perch-*.sha256
-            dist/Perch-*.asc
           body: |
             ## Install
 
@@ -45,15 +56,13 @@ jobs:
             3. First launch only — Perch is open-source and ad-hoc signed, not Apple-notarized, so macOS asks once:
                - **macOS 14 (Sonoma):** right-click Perch.app → **Open** → click **Open**
                - **macOS 15+ (Sequoia):** double-click Perch.app, close the warning, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-            4. Register hooks — Perch menu bar icon → **Install Claude Hooks…** / **Install Codex Hooks…**, or in Terminal:
-               ```
-               /Applications/Perch.app/Contents/MacOS/Perch --install-claude-hooks
-               /Applications/Perch.app/Contents/MacOS/Perch --install-codex-hooks
-               ```
+            4. Launch Perch, then open **Monitoring Setup…** from the menu bar.
+               Install monitoring for Claude Code and/or Codex, restart each configured agent,
+               and confirm **Live verification** receives a real event.
 
             ## Verify your download
 
-            Download all three files (`.dmg`, `.sha256`, `.sha256.asc`) into the same folder.
+            Download the `.dmg` and `.sha256` files into the same folder.
 
             **Step 1 — Integrity:** the DMG matches the published checksum
 
@@ -63,12 +72,13 @@ jobs:
             # expected: Perch-…-arm64.dmg: OK
             ```
 
-            **Step 2 — Origin:** the checksum was signed by the maintainer's GPG key
+            **Step 2 — Origin:** the DMG came from Perch's release workflow and tag
 
             ```sh
-            curl -fsSL https://github.com/theMobiusStrip.gpg | gpg --import
-            gpg --verify Perch-*.sha256.asc Perch-*.sha256
-            # expected: Good signature from "theMobiusStrip …"
+            gh attestation verify "Perch-${{ steps.version.outputs.version }}-arm64.dmg" \
+              --repo theMobiusStrip/perch \
+              --signer-workflow theMobiusStrip/perch/.github/workflows/release.yml \
+              --source-ref "refs/tags/${{ steps.version.outputs.tag }}"
             ```
 
-            A "not certified with a trusted signature" warning is normal — it means you haven't marked the key as trusted in your keyring; the signature itself is valid. The key is the same one that signs every commit in this repo.
+            The provenance check requires the GitHub CLI. It binds the DMG digest to this repository, release workflow, and tag.
