@@ -136,6 +136,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(actionItem("Insights…", #selector(openInsights), key: "i"))
         menu.addItem(actionItem("Token Usage…", #selector(openUsageHistory), key: "t"))
         menu.addItem(actionItem("Worktrees…", #selector(openWorktrees), key: "w"))
+        menu.addItem(actionItem("Skills Audit…", #selector(openSkills), key: "s"))
         menu.addItem(actionItem("Debug Window", #selector(openDebugWindow), key: "d"))
         menu.addItem(.separator())
 
@@ -346,6 +347,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func openInsights() { actions.openInsights() }
     @objc private func openUsageHistory() { actions.openUsageHistory() }
     @objc private func openWorktrees() { actions.openWorktrees() }
+    @objc private func openSkills() { actions.openSkills() }
     @objc private func quit() { actions.quit() }
 
     @objc private func openSetup() { actions.openSetup() }

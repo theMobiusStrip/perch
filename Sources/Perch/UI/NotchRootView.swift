@@ -5,8 +5,7 @@ import SwiftUI
 /// between the collapsed pill and the expanded panel (spring params, PLAN §4).
 ///
 /// Expanded panel composes (in order): PostureBadgeView, RiskCardView (when
-/// the feed is non-empty), a Sessions|Integrity page switcher, then either the
-/// session list (+ UsageOverviewRow + UsageGaugeStrip) or the IntegrityView.
+/// the feed is non-empty), then Sessions, Integrity, or Skills Audit.
 struct NotchRootView: View {
     @ObservedObject var state: NotchViewState
     @ObservedObject var sessions: SessionStore
@@ -16,7 +15,9 @@ struct NotchRootView: View {
     @ObservedObject var health: MonitoringHealth
     @ObservedObject var usageHistory: UsageHistoryModel
     @ObservedObject var integrity: IntegrityModel
+    @ObservedObject var skills: SkillAuditModel
     @ObservedObject var worktrees: WorktreeModel
+    let openSkills: (String?) -> Void
     let openWorktrees: () -> Void
     let openUsageHistory: () -> Void
     let openInsights: () -> Void
@@ -96,7 +97,8 @@ struct NotchRootView: View {
             if state.hasNotch {
                 Spacer(minLength: 0)  // push the visible band below the cutout
             }
-            PillView(sessions: sessions, health: health, hasAttention: state.hasAttention)
+            PillView(sessions: sessions, health: health, hasAttention: state.hasAttention,
+                     skillReviewCount: skills.snapshot.flaggedCount)
                 .frame(height: state.hasNotch ? NotchGeometry.pillBandHeight : state.pillSize.height)
         }
         .frame(width: state.pillSize.width, height: state.pillSize.height)
@@ -115,10 +117,13 @@ struct NotchRootView: View {
             }
             navigationRow
             Group {
-                if state.page == .sessions {
+                switch state.page {
+                case .sessions:
                     sessionList
-                } else {
-                    IntegrityView(model: integrity)
+                case .integrity:
+                    IntegrityView(model: integrity, renderStatic: renderStatic)
+                case .skills:
+                    SkillsAuditView(model: skills, onOpen: openSkills, renderStatic: renderStatic)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -152,7 +157,7 @@ struct NotchRootView: View {
         }
     }
 
-    // MARK: - Navigation (Sessions | Integrity, Quit)
+    // MARK: - Navigation
 
     private var navigationRow: some View {
         HStack(spacing: 8) {
@@ -166,6 +171,7 @@ struct NotchRootView: View {
         HStack(spacing: 2) {
             pageTab("Sessions", .sessions, badge: 0)
             pageTab("Integrity", .integrity, badge: integrity.snapshot.flaggedCount)
+            pageTab("Skills Audit", .skills, badge: skills.snapshot.flaggedCount)
         }
         .padding(2)
         .background(Capsule().fill(Color.white.opacity(0.07)))
@@ -190,9 +196,14 @@ struct NotchRootView: View {
     private func pageTab(_ title: String, _ page: NotchPage, badge: Int) -> some View {
         let selected = state.page == page
         return Button {
-            state.controller?.selectPage(page)
+            if let controller = state.controller { controller.selectPage(page) }
+            else { state.page = page }
         } label: {
             HStack(spacing: 4) {
+                if page == .skills {
+                    Image(systemName: "square.3.layers.3d")
+                        .font(.system(size: 9, weight: .semibold))
+                }
                 Text(title)
                     .font(.caption2.weight(selected ? .semibold : .regular))
                 if badge > 0 {
@@ -203,16 +214,19 @@ struct NotchRootView: View {
                         .background(Capsule().fill(PerchTheme.attention))
                 }
             }
-            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .foregroundStyle(selected ? (page == .skills ? PerchTheme.attention : Color.primary) : Color.secondary)
             .padding(.horizontal, 10).padding(.vertical, 3.5)
             .background(
                 Capsule()
-                    .fill(selected ? Color.white.opacity(0.16) : Color.clear)
+                    .fill(selected ? (page == .skills ? PerchTheme.attention.opacity(0.16) : Color.white.opacity(0.16)) : Color.clear)
                     .shadow(color: .black.opacity(selected ? 0.25 : 0), radius: 2, x: 0, y: 1)
             )
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(badge > 0 ? "\(badge) need review" : "")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// Claude sessions are live but no statusline payload ever arrived —

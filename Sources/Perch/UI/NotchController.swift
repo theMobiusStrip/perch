@@ -6,7 +6,7 @@ import PerchCore
 /// NotchRootView (SwiftUI side). The controller mutates it inside
 /// `withAnimation`; the views read it and call back through `controller`.
 /// Which page the expanded panel shows.
-enum NotchPage { case sessions, integrity }
+enum NotchPage { case sessions, integrity, skills }
 
 @MainActor
 final class NotchViewState: ObservableObject {
@@ -33,8 +33,10 @@ final class NotchController {
     private let health: MonitoringHealth
     private let usageHistory: UsageHistoryModel
     private let integrity: IntegrityModel
+    private let skills: SkillAuditModel
     private let worktrees: WorktreeModel
     private let openWorktrees: () -> Void
+    private let openSkills: (String?) -> Void
     private let openUsageHistory: () -> Void
     private let openInsights: () -> Void
     private let openSetup: () -> Void
@@ -57,7 +59,8 @@ final class NotchController {
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
          posture: SecurityPosture, health: MonitoringHealth,
          usageHistory: UsageHistoryModel,
-         integrity: IntegrityModel, worktrees: WorktreeModel,
+         integrity: IntegrityModel, skills: SkillAuditModel, worktrees: WorktreeModel,
+         openSkills: @escaping (String?) -> Void,
          openWorktrees: @escaping () -> Void,
          openUsageHistory: @escaping () -> Void,
          openInsights: @escaping () -> Void,
@@ -71,6 +74,8 @@ final class NotchController {
         self.health = health
         self.usageHistory = usageHistory
         self.integrity = integrity
+        self.skills = skills
+        self.openSkills = openSkills
         self.worktrees = worktrees
         self.openWorktrees = openWorktrees
         self.openUsageHistory = openUsageHistory
@@ -81,11 +86,12 @@ final class NotchController {
         state.controller = self
     }
 
-    /// Switch the expanded panel between the sessions and integrity pages.
+    /// Switch the expanded panel while retaining the last selected page.
     func selectPage(_ page: NotchPage) {
         guard state.page != page else { return }
         state.page = page
         if page == .integrity { integrity.refresh() }
+        if page == .skills { skills.refresh() }
     }
 
     deinit {
@@ -120,6 +126,7 @@ final class NotchController {
             }
         }
         integrity.refresh()
+        skills.refresh()
         updateInteractiveRect()
     }
 
@@ -207,8 +214,8 @@ final class NotchController {
         let panel = NotchPanel(contentRect: geo.windowFrame)
         let root = NotchRootView(state: state, sessions: sessions, usage: usage,
                                  riskFeed: riskFeed, posture: posture, health: health,
-                                 usageHistory: usageHistory, integrity: integrity,
-                                 worktrees: worktrees, openWorktrees: openWorktrees,
+                                 usageHistory: usageHistory, integrity: integrity, skills: skills,
+                                 worktrees: worktrees, openSkills: openSkills, openWorktrees: openWorktrees,
                                  openUsageHistory: openUsageHistory,
                                  openInsights: openInsights,
                                  openSetup: openSetup,

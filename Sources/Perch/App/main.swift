@@ -54,6 +54,26 @@ if let command = cliArgs.first {
         print(IntegrityScanner.scan(projectDirs: IntegrityScanner.liveSessionProjectDirs(),
                                     acks: IntegrityBaseline.load().acks).reportText)
         exit(0)
+    case "--skills-report":
+        // Headless mode has no session store. Audit the explicitly named
+        // projects, or the current project, alongside user-level skills.
+        let projectPaths = cliArgs.count > 1 ? Array(cliArgs.dropFirst())
+            : [FileManager.default.currentDirectoryPath]
+        do {
+            let projects = try SkillReportCommand.projects(from: projectPaths)
+            let acks = try SkillAuditBaseline.load().acks
+            let snapshot = SkillScanner.scan(projectDirs: projects, acks: acks)
+            print(snapshot.reportText)
+            exit(snapshot.issues.isEmpty && !snapshot.records.contains(where: {
+                $0.issues.contains(.unreadable) || $0.issues.contains(.scanIncomplete)
+            }) ? 0 : 1)
+        } catch let error as SkillReportCommand.InvalidProject {
+            FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+            exit(1)
+        } catch {
+            FileHandle.standardError.write(Data("Cannot read Skills Audit review markers; existing markers preserved.\n".utf8))
+            exit(1)
+        }
     case "--integrity-ack":
         // Record "reviewed at this state" for flagged items; the flag returns
         // when the surface actually changes (fingerprint mismatch).
@@ -125,6 +145,7 @@ if let command = cliArgs.first {
           --usage-report            print 30-day token usage from transcripts/rollouts
           --worktree-report         print the cross-project stale-worktree audit (read-only)
           --integrity-report        print the current persistence-surface scan
+          --skills-report [paths]   audit user skills and the current or named projects (read-only)
           --integrity-ack [id|all]  mark flagged surface items as reviewed (re-flags on change)
           --selftest                run the built-in test suite
           --install-claude-hooks    register Perch hooks + statusline in ~/.claude/settings.json
