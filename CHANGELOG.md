@@ -4,10 +4,27 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-15
+
+### Added
+
+- Added a read-only Local Skills Audit for Claude Code and Codex, with a
+  dedicated notch tab and searchable source inspector.
+- Added status, agent, and location filters, sorting, keyboard navigation,
+  and copy-path and Reveal in Finder actions.
+- Added shared-source registration details, content fingerprints, discovery
+  findings, and explicit incomplete-scan states. Local review markers record
+  a fingerprint in Perch, not approval or a safety verdict.
+- Added `--skills-report [paths]` for local skill reports, with errors and a
+  nonzero exit status for invalid project targets or incomplete scans.
+- Added risk findings for local skill instruction, registration, and script
+  mutations, including quoted operands, redirections, and multi-file edits.
+
 ### Changed
 
 - Made tagged builds draft releases until their hardware-signed checksum is
   uploaded and the release is ready to publish.
+- Documented canonical contributor, code-convention, and public-content policies.
 
 ## [1.7.0] - 2026-09-12
 
@@ -126,7 +143,8 @@ Notable changes to Perch are documented here. Dates use `YYYY-MM-DD`.
 - Closed leading-whitespace command-anchor detection bypasses.
 - Bounded memory use while scanning token-usage files.
 
-[Unreleased]: https://github.com/theMobiusStrip/perch/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/theMobiusStrip/perch/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/theMobiusStrip/perch/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/theMobiusStrip/perch/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/theMobiusStrip/perch/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/theMobiusStrip/perch/compare/v1.4.0...v1.5.0
