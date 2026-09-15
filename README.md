@@ -276,7 +276,7 @@ then:
 
 ```sh
 cd ~/Downloads
-PERCH_VERSION=1.7.0
+PERCH_VERSION=1.8.0
 
 # Step 1 — Integrity: the DMG matches the published checksum
 shasum -a 256 --check "Perch-${PERCH_VERSION}-arm64.dmg.sha256"
