@@ -30,6 +30,18 @@ let seeds: [String] = [
     "ls -la", "git status", "echo hello", "npm test", "cat README.md",
     "grep -r foo .", "mkdir build", "cd src && make", "swift build",
     "brew install jq", "docker ps", "python3 script.py",
+    "cp guide.md ~/.agents/skills/audit/SKILL.md",
+    "printf text > ~/.claude/skills/audit/references/guide.md",
+    "cp run.py ~/.agents/skills/audit/scripts/run.py 2>/dev/null",
+    "cp run.py 2>/dev/null ~/.agents/skills/audit/scripts/run.py",
+    "cp -f \"source.py\" ~/.claude/skills/audit/run.py",
+    "sed -i '' -e 's/old/new/' ~/.claude/skills/audit/run.py other.py",
+    "install run.sh ~/.claude/skills/audit/scripts/run.sh",
+    "ln -s /workspace/skill-source ~/.agents/skills/audit",
+    "ln -sf /tmp/skill-source ~/.claude/skills/audit",
+    "chmod +x ~/.agents/skills/audit/scripts/run.sh",
+    "mkdir -p .claude/skills/audit", "cat ~/.agents/skills/audit/SKILL.md",
+    "echo cp guide.md ~/.agents/skills/audit/SKILL.md",
 ]
 
 func combos(_ r: inout SplitMix64) -> [String] {
@@ -117,6 +129,38 @@ for cmd in corpus {
     }
 }
 
+// Command-aware operand rewrites: unrelated redirection, quoting literal
+// paths, and sed file order must not hide a skill mutation. Generic wrappers
+// alone cannot detect a lost destination in the middle of an argument list.
+var skillOperandRelations: [(String, String, String)] = []
+for root in ["/workspace/.agents/skills/a", "/workspace/.claude/skills/a"] {
+    for file in ["run.py", "SKILL.md"] {
+        let target = root + "/" + file
+        let base = "cp source.py " + target
+        for (name, changed) in [
+            ("redirect-before-operands", "cp 2>/dev/null source.py " + target),
+            ("redirect-between-operands", "cp source.py 2>/dev/null " + target),
+            ("redirect-after-operands", base + " 2>/dev/null"),
+            ("input-redirect-between-operands", "cp source.py </dev/null " + target),
+            ("fd-redirect-between-operands", "cp source.py 2>&1 " + target),
+            ("quote-source", "cp \"source.py\" " + target),
+            ("force-quoted-source", "cp -f \"source.py\" " + target),
+            ("force-quoted-operands", "cp -f \"source.py\" \"" + target + "\""),
+        ] { skillOperandRelations.append((name, base, changed)) }
+        let sed = "sed -i '' -e 's/old/new/' " + target
+        skillOperandRelations.append(("sed-append-file", sed, sed + " /workspace/other.py"))
+        skillOperandRelations.append(("sed-prepend-file", sed,
+            "sed -i '' -e 's/old/new/' /workspace/other.py " + target))
+    }
+}
+for (name, base, changed) in skillOperandRelations {
+    let from = assess(base), to = assess(changed)
+    if from != to {
+        violations.append(Violation(kind: to < from ? "monotone" : "invariant", transform: name,
+                                    base: base, transformed: changed, from: from, to: to))
+    }
+}
+
 // Patch targets are a separate input grammar: command-only transforms cannot
 // detect lost file headers or accidental scoring of source text as a command.
 func assessPatch(_ patch: String) -> RiskLevel {
@@ -164,6 +208,7 @@ func short(_ s: String) -> String {
 
 let tested = corpus.count
 print("metamorphic: \(tested) commands x \(monotone.count + invariant.count) transforms")
+print("metamorphic: \(skillOperandRelations.count) skill operand relations")
 print("metamorphic: \(patches.count) patches x \(patchInvariants.count + 1) transforms")
 if violations.isEmpty {
     print("PASS — no relation violations")

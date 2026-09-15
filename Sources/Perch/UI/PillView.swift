@@ -6,6 +6,7 @@ struct PillView: View {
     @ObservedObject var sessions: SessionStore
     @ObservedObject var health: MonitoringHealth
     let hasAttention: Bool
+    var skillReviewCount: Int = 0
 
     private var liveSessions: [Session] {
         sessions.sessions.filter(\.isLive)
@@ -34,6 +35,18 @@ struct PillView: View {
 
             if hasAttention {
                 AttentionDot()
+            }
+            if skillReviewCount > 0 {
+                HStack(spacing: 3) {
+                    Image(systemName: "square.3.layers.3d")
+                        .font(.system(size: 8))
+                    Text("\(skillReviewCount)")
+                        .font(.system(size: 9, weight: .medium))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(PerchTheme.attention)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Skills Audit: \(skillReviewCount) need review")
             }
         }
         .padding(.horizontal, 10)

@@ -99,12 +99,13 @@ notification.
 | **Remote code execution** | ✅ | `curl … \| sh`, `wget … \| bash` |
 | **Credential access (shell)** | ✅ | reads of `~/.ssh`, `id_rsa`, `~/.aws/credentials`, `.env`, `security dump-keychain` |
 | **Writing to the agent's brain** | ✅ | writes to `CLAUDE.md` / memory (caution) or `~/.claude` settings/hooks (danger) — caught the moment they happen |
+| **Local skill mutations** | ✅ | recognized Claude/Codex skill paths: Markdown or registration edits (caution), executable/script content (danger) |
 | **History / data loss** | ✅ | `git push --force`, `git reset --hard`, `kill -9` |
 | **Suspicious network** | ✅ | plaintext `http://`, raw-IP fetches, `netcat` |
 
 ### 🧭 Footholds — what the agent left behind
 
-The **Footholds** notch page scans the persistence surface straight from disk
+The **Integrity** notch page scans the persistence surface straight from disk
 and shows its *current state* — no hook required, so it covers changes made
 before Perch launched or while hooks were off. This is where a poisoned or
 hijacked agent tries to survive the session.
@@ -113,7 +114,7 @@ hijacked agent tries to survive the session.
 |---|:---:|---|
 | **Agent config** | ✅ | `~/.claude` settings — with a **non-Perch hook** flag — plus `settings.local`, `~/.codex` config/hooks |
 | **MCP servers** | ✅ | count of servers auto-launched from `~/.claude.json` |
-| **Code-run installs** | ✅ | `~/.claude` `plugins` / `skills` / `commands` directories |
+| **Code-run installs** | ✅ | `~/.claude` `plugins` / `commands` directories; skills have their own audit tab |
 | **Instructions & memory** | ✅ | `~/.claude/CLAUDE.md`, `memory/`, and per-project `CLAUDE.md` / `AGENTS.md` |
 | **System persistence** | ✅ | `~/Library/LaunchAgents`, shell profiles |
 
@@ -125,6 +126,58 @@ poisoned.
 Every Action rule lives in one readable, selftested file —
 [`RiskAssessor.swift`](Sources/PerchCore/RiskAssessor.swift); the Foothold
 scan is [`IntegrityScanner.swift`](Sources/Perch/Model/IntegrityScanner.swift).
+
+### Local Skills Audit
+
+**Skills Audit** is a separate notch tab, with an amber attention count and
+changed or broken entries first. Open a row for the searchable full audit:
+source and registration paths, agent and scope, symlink targets, metadata,
+file counts, content fingerprint, and findings. One shared source appears
+once even when registered with both agents. Review, refresh, copy path, and
+reveal in Finder are the only actions; Perch never installs, edits, removes,
+enables, disables, or executes skills.
+
+The full audit keeps a library beside a focused source inspector. Filter by
+attention or reviewed state, agent, and user/project location; sort by attention,
+name, or modification time. Search supports multiple words across names,
+descriptions, and paths (⌘F; Esc clears search). Arrow keys browse the
+source list, and previous/next buttons step through matching sources. ⌘R
+checks again without resetting filters or a still-visible selection. Source
+actions stay near the path, technical details expand on demand, and the review
+action stays visible while scrolling. Reviewed sources can still have findings;
+scan coverage issues remain separate from source-filter counts.
+
+The scanner reads Claude's user `skills` directory (respecting
+`CLAUDE_CONFIG_DIR`), Codex's `~/.agents/skills`, and `.claude/skills` /
+`.agents/skills` in known session and worktree projects. Repository ancestors
+are included up to the nearest repository boundary. The CLI
+`Perch --skills-report [paths]` scans user roots plus the current directory
+or explicitly named projects; it does not load the running app's sessions.
+Missing, non-directory, or inaccessible project arguments produce an error
+and a nonzero exit status; missing optional skill directories are normal.
+Bundled, plugin, synced, admin, and remote skills are outside this audit.
+
+Fingerprints cover file content and registrations, not just modification
+times. **Mark reviewed** records the displayed fingerprint in Perch's own
+local baseline; it does not approve a skill or modify its source. A later
+content or registration change needs review again. **Discoverable** means
+found on disk, not loaded, enabled, or safe. New recent content is flagged
+even without an existing review marker; an older unreviewed source remains
+neutral. Same-name findings do not claim which registration an agent uses.
+
+Scanning is bounded: up to 512 registrations, 2 MiB per file, 16 MiB per
+source, and 64 MiB total content. Unreadable data, unsupported YAML, skipped
+nested symlinks, special files, and exceeded limits remain explicit incomplete
+states, not clean results. Registration symlinks are resolved with a hop limit;
+nested symlink content is not followed. The frontmatter reader intentionally
+supports a conservative YAML subset. No scripts, subprocesses, or network
+requests are used by the scanner.
+
+Hook scoring is path-based: arbitrary shared-repository targets behind
+symlinks and custom discovery roots may not be recognized in a live tool
+event. Shell mutation heuristics do not evaluate environment variables or
+perform filesystem lookups. Content changes can still be detected by the next scoped disk
+scan. Implementation: [`SkillScanner.swift`](Sources/Perch/Model/SkillScanner.swift).
 
 > **What it does _not_ catch.** Perch is a heuristic pattern-matcher, not a
 > sandbox — a smoke detector, not a firewall. Actions it does **not** score:
@@ -342,6 +395,7 @@ Perch --doctor                    integration + detection status
 Perch --usage-report              30-day token usage, plain text
 Perch --worktree-report           cross-project stale-worktree audit, plain text
 Perch --integrity-report          persistence-surface scan, plain text
+Perch --skills-report [paths]     user and current/named project skills, read-only
 Perch --integrity-ack [id|all]    mark flagged surface items as reviewed
 Perch --selftest                  run the built-in test suite (600+ assertions)
 Perch --install-claude-hooks      / --uninstall-claude-hooks

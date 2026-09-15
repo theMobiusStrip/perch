@@ -12,6 +12,7 @@ struct AppActions {
     var openInsights: () -> Void
     var openUsageHistory: () -> Void
     var openWorktrees: () -> Void
+    var openSkills: () -> Void
     var quit: () -> Void
 }
 
@@ -35,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var debugWindow: DebugWindowController?
     private let usageHistory = UsageHistoryModel()
     private let integrityModel = IntegrityModel()
+    private let skillAuditModel = SkillAuditModel()
     private let worktreeModel = WorktreeModel()
     private var usageRefreshTimer: Timer?
     private var integrityRefreshTimer: Timer?
@@ -44,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let updateChecker = UpdateChecker()
     private var usageHistoryWindow: UsageHistoryWindowController?
     private var worktreeWindow: WorktreeWindowController?
+    private var skillsWindow: SkillsAuditWindowController?
     private var setupWindow: SetupWindowController?
     private var recentDetectionsWindow: RecentDetectionsWindowController?
     private var insightsWindow: InsightsWindowController?
@@ -133,12 +136,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         worktreeModel.liveCwdsProvider = { [weak self] in
             Set(self?.sessionStore.sessions.filter(\.isLive).compactMap { $0.cwd } ?? [])
         }
+        skillAuditModel.projectDirsProvider = { [weak self] in
+            guard let self else { return [] }
+            var paths = Set(self.sessionStore.sessions.compactMap(\.cwd))
+            for repo in self.worktreeModel.snapshot.repos {
+                paths.insert(repo.repoPath)
+                paths.formUnion(repo.worktrees.map(\.path))
+            }
+            return paths.sorted().map { URL(fileURLWithPath: $0) }
+        }
         let actions = makeActions()
         let notchController = NotchController(sessions: sessionStore, usage: usageStore,
                                               riskFeed: riskFeed, posture: securityPosture,
                                               health: monitoringHealth,
                                               usageHistory: usageHistory, integrity: integrityModel,
+                                              skills: skillAuditModel,
                                               worktrees: worktreeModel,
+                                              openSkills: { [weak self] id in self?.openSkillsWindow(selecting: id) },
                                               openWorktrees: { [weak self] in self?.openWorktreeWindow() },
                                               openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
                                               openInsights: { [weak self] in self?.openInsightsWindow() },
@@ -187,8 +201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usageRefreshTimer = refresh
 
         integrityModel.refresh()
+        skillAuditModel.refresh()
         let integrityRefresh = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.integrityModel.refresh() }
+            Task { @MainActor in
+                self?.integrityModel.refresh()
+                self?.skillAuditModel.refresh()
+            }
         }
         integrityRefresh.tolerance = 20
         integrityRefreshTimer = integrityRefresh
@@ -306,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openInsights: { [weak self] in self?.openInsightsWindow() },
             openUsageHistory: { [weak self] in self?.openUsageHistoryWindow() },
             openWorktrees: { [weak self] in self?.openWorktreeWindow() },
+            openSkills: { [weak self] in self?.openSkillsWindow() },
             quit: { NSApp.terminate(nil) })
     }
 
@@ -322,6 +341,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             worktreeWindow = WorktreeWindowController(model: worktreeModel)
         }
         worktreeWindow?.show()
+    }
+
+    private func openSkillsWindow(selecting id: String? = nil) {
+        if skillsWindow == nil {
+            skillsWindow = SkillsAuditWindowController(model: skillAuditModel)
+        }
+        notch?.collapse()
+        skillsWindow?.show(selecting: id)
     }
 
     private func openUsageHistoryWindow() {

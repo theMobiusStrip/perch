@@ -91,6 +91,12 @@ enum Selftest {
         patchCompatibility(t)
         integrityScannerClassifiesSurface(t)
         integrityAckAndOwnership(t)
+        skillAudit(t)
+        skillFrontmatter(t)
+        skillReportProjects(t)
+        skillRisk(t)
+        skillReviewMarkers(t)
+        skillQuery(t)
 
         // WorktreeAudit (pure parser + classifier + cleanup)
         worktreePorcelainParse(t)
@@ -1537,10 +1543,7 @@ private func integrityScannerClassifiesSurface(_ t: Checker) {
         t.expectEqual(cmds.status, .changedRecently, "commandsRecent")
         t.expectTrue(cmds.detail.contains("1 command"), "commandsCount")
     }
-    if let skills = t.unwrap(snap3.items.first(where: { $0.id == "claude-skills" }), "skillsPresent") {
-        t.expectEqual(skills.status, .absent, "emptyDirAbsent")
-        t.expectTrue(skills.detail.contains("empty"), "emptyDirDetail")
-    }
+    t.expectFalse(snap3.items.contains { $0.id == "claude-skills" }, "skillsHaveSeparateAudit")
 
     // fileItem: exists but unstattable is NOT reported absent — build via a
     // directory named like the file so fileExists(isDirectory) rejects it as a

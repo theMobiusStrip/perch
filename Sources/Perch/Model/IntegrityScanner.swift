@@ -225,9 +225,8 @@ enum IntegrityScanner {
         // judged by the installed set (installed_plugins.json), not directory
         // mtime — marketplace auto-refresh used to keep the row orange forever.
         out.append(pluginsItem(claudeDir.appendingPathComponent("plugins"), now: now, recency: recency))
-        out.append(dirItem(claudeDir.appendingPathComponent("skills"), id: "claude-skills",
-                           label: "~/.claude/skills", noun: "skill", category: .agentConfig,
-                           now: now, recency: recency))
+        // Local skills have their own per-source, content-hashed audit. Do not
+        // duplicate its findings here with a directory-mtime approximation.
         out.append(dirItem(claudeDir.appendingPathComponent("commands"), id: "claude-commands",
                            label: "~/.claude/commands", noun: "command", category: .agentConfig,
                            now: now, recency: recency))

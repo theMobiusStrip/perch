@@ -92,12 +92,12 @@ public enum RiskAssessor {
 
         // Shell-style tools: inspect the command string.
         if let command = shellCommand(toolName: tool, input: input) {
-            findings.append(contentsOf: assessCommand(command))
+            findings.append(contentsOf: assessCommand(command, cwd: input?["workdir"]?.string ?? cwd))
         }
 
         // File writes to sensitive locations (Write/Edit and friends).
         if isWriteTool(tool), let path = input?.first(of: ["file_path", "path", "notebook_path"])?.string {
-            findings.append(contentsOf: assessWritePath(path))
+            findings.append(contentsOf: assessWritePath(PatchTargets.resolve(path, cwd: cwd)))
         }
 
         // Codex's hook payload carries the patch in tool_input.command, not
@@ -132,7 +132,8 @@ public enum RiskAssessor {
     /// literal payloads (python -c scripts, PR bodies, regex fixtures) are
     /// multi-line or sit in single quotes / heredocs. A real path never
     /// contains a newline.
-    static func strippedForMatching(_ raw: String, keepDoubleQuoted: Bool = false) -> String {
+    static func strippedForMatching(_ raw: String, keepDoubleQuoted: Bool = false,
+                                    keepSingleQuoted: Bool = false) -> String {
         var out = ""
         out.reserveCapacity(raw.count)
         let s = Array(raw.unicodeScalars)
@@ -165,7 +166,11 @@ public enum RiskAssessor {
             case "'":
                 var j = i + 1
                 while j < s.count && s[j] != "'" { j += 1 }
-                out.append(" ")
+                if keepSingleQuoted {
+                    out.unicodeScalars.append(contentsOf: s[i..<min(j + 1, s.count)])
+                } else {
+                    out.append(" ")
+                }
                 i = min(j + 1, s.count)
             case "\"":
                 var j = i + 1
@@ -467,7 +472,7 @@ public enum RiskAssessor {
         + #"|(?:-name|-iname|-path|-ipath|--include|--exclude)\s*=?\s*"#
         + #")"[^"\n]*""#
 
-    static func assessCommand(_ raw: String) -> [RiskFinding] {
+    static func assessCommand(_ raw: String, cwd: String? = nil) -> [RiskFinding] {
         // Execution rules match the stripped text; target-needle rules keep
         // double-quoted operands. Anything that will EXECUTE despite quoting —
         // sh -c / eval arguments, `$(…)` / backtick substitutions, heredocs
@@ -479,10 +484,15 @@ public enum RiskAssessor {
         var exec = strippedForMatching(raw)
         var needle = strippedForMatching(raw, keepDoubleQuoted: true)
             .replacingOccurrences(of: messageArg, with: " ", options: .regularExpression)
+        // Skill rules identify actual mutation commands and consume quoted
+        // spans themselves. Preserve operands: `-f "source"` is a cp flag
+        // plus a filename, not necessarily a gh prose field.
+        var skillCommand = strippedForMatching(raw, keepDoubleQuoted: true, keepSingleQuoted: true)
         for payload in payloads {
             // A harvested payload is code, not prose — no message-arg carve-out.
             exec += "\n" + strippedForMatching(payload)
             needle += "\n" + strippedForMatching(payload, keepDoubleQuoted: true)
+            skillCommand += "\n" + strippedForMatching(payload, keepDoubleQuoted: true, keepSingleQuoted: true)
         }
         let cmd = exec.lowercased()
         let needleCmd = needle.lowercased()
@@ -579,6 +589,7 @@ public enum RiskAssessor {
         // destination, sed -i file) — co-occurrence of a `>` somewhere and a
         // mention somewhere is how `cat CLAUDE.md 2>/dev/null` used to fire.
         out.append(contentsOf: agentSurfaceFindings(inCommand: needleCmd))
+        out.append(contentsOf: skillSurfaceFindings(inCommand: skillCommand.lowercased(), cwd: cwd))
 
         return out
     }
@@ -752,7 +763,7 @@ public enum RiskAssessor {
     /// badges without notifying). Perch's own installer trips the danger rule
     /// when it writes settings.json — deliberately not exempted.
     static let agentConfigNeedles: [String] = [
-        "/.claude/settings", "/.claude/hooks", "/.claude/plugins", "/.claude/skills",
+        "/.claude/settings", "/.claude/hooks", "/.claude/plugins",
         "/.codex/hooks.json", "/.codex/config.toml",
     ]
     static let memoryPollutionNeedles: [String] = [
@@ -760,7 +771,7 @@ public enum RiskAssessor {
         ".cursorrules", "copilot-instructions.md",
     ]
     static let agentConfigNeedlePattern =
-        #"(?:/\.claude/settings|/\.claude/hooks|/\.claude/plugins|/\.claude/skills|/\.codex/hooks\.json|/\.codex/config\.toml)"#
+        #"(?:/\.claude/settings|/\.claude/hooks|/\.claude/plugins|/\.codex/hooks\.json|/\.codex/config\.toml)"#
     static let memoryPollutionNeedlePattern =
         #"(?:claude\.md|agents\.md|memory\.md|/\.claude/memory/|\.cursorrules|copilot-instructions\.md)"#
 
@@ -773,6 +784,184 @@ public enum RiskAssessor {
         if isWriteTarget(memoryPollutionNeedlePattern, in: cmd) {
             out.append(RiskFinding(level: .caution, code: "memory-pollution",
                                    message: "Writes agent instructions/memory (CLAUDE.md, memory files)"))
+        }
+        return out
+    }
+
+    /// Skills contain both instructions and optional code. A skill script is
+    /// executable material, but its presence does not mean an agent runs it.
+    /// Match discovery-directory components, not similarly named siblings.
+    /// This pure assessor cannot resolve a shared source through a symlink.
+    private static func skillWriteFinding(_ path: String, registration: Bool = false,
+                                          executablePermission: Bool = false) -> RiskFinding? {
+        let p = path.lowercased()
+        let parts = p.split(separator: "/").map(String.init)
+        guard let root = parts.indices.dropLast().first(where: {
+            [".claude", ".agents"].contains(parts[$0]) && parts[$0 + 1] == "skills"
+        }) else { return nil }
+        let within = Array(parts.dropFirst(root + 2))
+        if !registration, within.count >= 2 {
+            let ext = (p as NSString).pathExtension
+            if executablePermission || (ext != "md" && (within.dropFirst().contains("scripts")
+                || ["sh", "bash", "zsh", "fish", "py", "pyw", "js", "mjs", "cjs", "ts", "tsx",
+                    "jsx", "rb", "pl", "php", "swift", "go", "rs", "c", "h", "cpp", "lua",
+                    "scpt", "applescript", "command", "bin", "dylib", "so"].contains(ext))) {
+                return RiskFinding(level: .danger, code: "skill-script",
+                                   message: "Changes a skill script or executable material")
+            }
+            if ext == "md" {
+                return RiskFinding(level: .caution, code: "memory-pollution",
+                                   message: "Writes agent instructions (skill markdown)")
+            }
+        }
+        return RiskFinding(level: .caution, code: "skill-registration",
+                           message: "Changes a local skill registration or supporting file")
+    }
+
+    private static let skillQuotePattern = #"(?:"(?:[^"\\]|\\.)*"|'[^']*')"#
+    private static let skillOperandPattern = "(?:" + skillQuotePattern + #"|[^\s;&|<>"'])+"#
+    private static let skillOperands = try! NSRegularExpression(pattern: skillOperandPattern)
+    // The first branch consumes quoted spans so an operator inside a path
+    // cannot masquerade as a redirect. Remove redirects but not the operands
+    // that follow them: `cp source 2>/dev/null destination` still writes.
+    private static let skillRedirect = try! NSRegularExpression(pattern:
+        skillQuotePattern + #"|(?<!\\)(?:(?<!\S)[0-9]+)?(&>>?|<<<|<<-?|<>|>>?[&|]?|<&?)\s*("#
+            + skillOperandPattern + #")"#)
+    private static let skillMutation = try! NSRegularExpression(pattern:
+        skillQuotePattern + "|" + cmdAnchor
+            + #"(?:/(?:usr/)?bin/)?(cp|mv|install|ln|tee|sed|mkdir|touch|chmod|rm)\s+((?:"#
+            + skillQuotePattern + #"|[^;&|\n])+)"#)
+    private static let skillCd = try! NSRegularExpression(pattern:
+        skillQuotePattern + "|" + cmdAnchor + #"cd\s+("# + skillOperandPattern + ")")
+
+    private static func skillUnquote(_ value: String) -> String {
+        guard let first = value.first, ["\"", "'"].contains(first), value.last == first else { return value }
+        return String(value.dropFirst().dropLast())
+    }
+
+    /// No environment/home expansion is available in a pure assessor. Keep
+    /// such roots symbolic instead of inventing a path underneath cwd. A
+    /// quoted tilde or a single-quoted variable is a literal relative path.
+    private static func skillShellPath(_ value: String, cwd: String?) -> String {
+        let path = skillUnquote(value)
+        let symbolic = (path.hasPrefix("~") && !value.hasPrefix("\"") && !value.hasPrefix("'"))
+            || (path.hasPrefix("$") && !value.hasPrefix("'"))
+        return PatchTargets.resolve(path, cwd: symbolic ? nil : cwd)
+    }
+
+    /// Account for both GNU's optional attached -i suffix and BSD's separate
+    /// suffix. Expressions and script files are inputs; every remaining file
+    /// operand is modified, not just the last one.
+    private static func skillSedTargets(_ rawTokens: [String]) -> [String] {
+        let tokens = rawTokens.map(skillUnquote)
+        var inPlace = false
+        // An explicit script may follow file operands (GNU option ordering).
+        // In that case the first non-option is already a file, not a script.
+        var hasScript = tokens.prefix(while: { $0 != "--" }).contains {
+            ["-e", "--expression", "-f", "--file"].contains($0)
+                || $0.hasPrefix("--expression=") || $0.hasPrefix("--file=")
+                || (($0.hasPrefix("-e") || $0.hasPrefix("-f")) && $0.count > 2)
+        }
+        var files: [String] = []
+        var i = 0
+        var options = true
+        while i < tokens.count {
+            let token = tokens[i]
+            if options && token == "--" { options = false; i += 1; continue }
+            if options && ["-e", "--expression", "-f", "--file"].contains(token) {
+                hasScript = true
+                i += 2
+                continue
+            }
+            if options && (token.hasPrefix("--expression=") || token.hasPrefix("--file=")
+                || ((token.hasPrefix("-e") || token.hasPrefix("-f")) && token.count > 2)) {
+                hasScript = true
+                i += 1
+                continue
+            }
+            if options && (token.hasPrefix("-i") || token == "--in-place" || token.hasPrefix("--in-place=")) {
+                inPlace = true
+                if token == "-i", i + 1 < tokens.count {
+                    let next = tokens[i + 1]
+                    if next.isEmpty || (next.hasPrefix(".") && !next.contains("/")) { i += 1 }
+                }
+            } else if options && token.hasPrefix("-") {
+                // -E/-n do not consume an operand.
+            } else if !hasScript {
+                hasScript = true
+            } else {
+                files.append(rawTokens[i])
+            }
+            i += 1
+        }
+        return inPlace ? files : []
+    }
+
+    /// Restrict matches to actual operands of known mutations. In particular,
+    /// echo/grep/git prose mentioning a skill is not itself a skill write.
+    /// Quoted prose is consumed as a span; only known command operands and
+    /// actual redirection targets enter path classification.
+    private static func skillSurfaceFindings(inCommand cmd: String, cwd: String?) -> [RiskFinding] {
+        let ns = cmd as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        var out: [RiskFinding] = []
+        func resolved(_ value: String, before offset: Int) -> String {
+            var local = cwd
+            for match in skillCd.matches(in: cmd, range: range)
+                where match.range(at: 1).location != NSNotFound && match.range.location < offset {
+                local = skillShellPath(ns.substring(with: match.range(at: 1)), cwd: local)
+            }
+            return skillShellPath(value, cwd: local)
+        }
+        let commandText = NSMutableString(string: cmd)
+        for match in skillRedirect.matches(in: cmd, range: range) where match.range(at: 1).location != NSNotFound {
+            let op = ns.substring(with: match.range(at: 1))
+            if !op.hasSuffix("&"), op.contains(">") {
+                let path = resolved(ns.substring(with: match.range(at: 2)), before: match.range.location)
+                if let finding = skillWriteFinding(path) { out.append(finding) }
+            }
+            // Preserve offsets for the cwd lookup, including Unicode paths.
+            commandText.replaceCharacters(in: match.range, with: String(repeating: " ", count: match.range.length))
+        }
+        for match in skillMutation.matches(in: commandText as String, range: range) where match.range(at: 1).location != NSNotFound {
+            let command = commandText.substring(with: match.range(at: 1))
+            let argsRange = match.range(at: 2)
+            let args = commandText.substring(with: argsRange) as NSString
+            let tokens = skillOperands.matches(in: args as String, range: NSRange(location: 0, length: args.length))
+                .map { args.substring(with: $0.range) }
+            let operands = tokens.filter { !skillUnquote($0).hasPrefix("-") }
+            let targets: [String]
+            switch command {
+            case "cp", "mv", "install", "ln":
+                targets = operands.count >= 2 ? Array(operands.suffix(1)) : []
+            case "sed":
+                targets = skillSedTargets(tokens)
+            case "chmod": targets = operands.count >= 2 ? Array(operands.dropFirst()) : operands
+            default: targets = operands
+            }
+            for target in targets {
+                let path = resolved(target, before: match.range.location)
+                guard let finding = skillWriteFinding(path, registration: command == "ln" || command == "mkdir",
+                    executablePermission: command == "chmod" && tokens.contains(where: { $0.contains("+x") })) else { continue }
+                out.append(finding)
+                if command == "ln", let source = operands.first {
+                    let symbolic = tokens.contains { $0 == "--symbolic" || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("s")) }
+                    // A relative symlink target is interpreted at the link,
+                    // not at ln's cwd. Without a filesystem lookup, the final
+                    // operand may be a new link or an existing directory.
+                    let sources = symbolic
+                        ? [(path as NSString).deletingLastPathComponent, path].map { skillShellPath(source, cwd: $0) }
+                        : [resolved(source, before: match.range.location)]
+                    if sources.allSatisfy({ sourcePath in
+                        ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"].contains {
+                            sourcePath == $0 || sourcePath.hasPrefix($0 + "/")
+                        }
+                    }) {
+                        out.append(RiskFinding(level: .danger, code: "skill-temporary-source",
+                                               message: "Links a local skill to a temporary directory"))
+                    }
+                }
+            }
         }
         return out
     }
@@ -855,21 +1044,11 @@ public enum RiskAssessor {
             || (name.hasPrefix(".env.") && !["example", "sample", "template"].contains(String(name.dropFirst(5)))) {
             out.append(RiskFinding(level: .danger, code: "secret-file", message: "Writes a .env file"))
         }
-        // For a Write/Edit path the needle IS the target — plain contains. But
-        // a skill's Markdown is prompt material, not executable config: a
-        // SKILL.md / references/*.md is injected as instructions, it never
-        // runs like a hook or a settings permission. Route it to
-        // memory-pollution (caution) so it badges instead of firing a danger
-        // OS notification; scripts and the settings/hooks/plugins surface
-        // still fire danger.
+        // For a Write/Edit path the needle IS the target — plain contains.
+        if let finding = skillWriteFinding(p) { out.append(finding) }
         if agentConfigNeedles.contains(where: p.contains) {
-            if p.contains("/.claude/skills/"), (p as NSString).pathExtension == "md" {
-                out.append(RiskFinding(level: .caution, code: "memory-pollution",
-                                       message: "Writes agent instructions (skill markdown)"))
-            } else {
-                out.append(RiskFinding(level: .danger, code: "agent-config",
-                                       message: "Writes agent hook/settings config — executes in future sessions"))
-            }
+            out.append(RiskFinding(level: .danger, code: "agent-config",
+                                   message: "Writes agent hook/settings config — executes in future sessions"))
         }
         // Claude Code's own auto-memory lives under ~/.claude/projects/…/memory
         // and is written every session by design — flagging it is pure noise.
