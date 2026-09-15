@@ -60,27 +60,13 @@ events. SwiftPM only — there is no Xcode project.
 - `Sources/PerchMeta`, `Sources/PerchFuzz` — offline oracles; built as
   executables but never shipped in the app bundle.
 
-## Conventions
+## Required policy reading
 
-- Commits follow Conventional Commits 1.0.0:
-  `<type>[optional scope][!]: <description>`. Use one of `build`, `chore`,
-  `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, or
-  `test`; keep the full header imperative and ≤50 characters. True merge
-  commits (two or more parents) are the only exemption. Run `make hooks` once
-  per clone for local checks; CI validates every authored commit introduced by
-  a PR. Body text is only needed when the why isn't obvious. Codex-authored
-  commits end with the official
-  `Co-authored-by: Codex <noreply@openai.com>` trailer, and Codex-authored PRs
-  include `Generated with Codex.` exactly once. No process narrative, no
-  conversation-context leak (sources, durations, prompts), and no
-  machine-derived measurements — real worktree/token/file counts, disk sizes,
-  timings, local paths from the dev machine — in commit or PR text. Describe
-  behavior generically ("count · total · reclaimable"), never with this
-  machine's numbers. This class caused a full history squash once; it is the
-  leak, not just the examples in parentheses.
-- Public repo: never commit or push private data — no PLAN.md, machine
-  details, credentials, or internal paths.
-- Releases are built by CI from `v*` tags (`release.yml`) as drafts. Verify the
-  CI-built DMG and checksum, hardware-sign only that checksum, upload the
-  `.sha256.asc`, and publish only after all three assets are present. Never
-  hand-build or re-sign the DMG locally.
+- Before modifying or reviewing code, read
+  [`docs/code-conventions.md`](docs/code-conventions.md). It is canonical for
+  code organization, interfaces, error handling, tests, dependencies, and the
+  limits of automated convention coverage.
+- Before preparing or checking a commit, pull request, push, or public artifact,
+  read [`CONTRIBUTING.md`](CONTRIBUTING.md). It is canonical for commit and PR
+  writing, Codex attribution, public-content hygiene, check coverage, and the
+  release procedure.
