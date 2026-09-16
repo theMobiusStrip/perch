@@ -2099,7 +2099,7 @@ private func riskCatchesEvasion(_ t: Checker) {
     // Path traversal out of scratch is a real delete / real secret read.
     t.expectEqual(level("cd /tmp && rm -rf ../../Users/victim/Documents"), .danger, "traversalOutOfScratch")
     t.expectEqual(level("rm -rf ./node_modules/../src"), .danger, "nodeModulesTraversal")
-    t.expectEqual(level("cat /tmp/../Users/evan/.ssh/id_rsa"), .danger, "credTraversalOutOfScratch")
+    t.expectEqual(level("cat /tmp/../Users/example/.ssh/id_rsa"), .danger, "credTraversalOutOfScratch")
     t.expectEqual(level("rm -rf ~/Documents && mkdir ~/Documents"), .danger, "mkdirRecreateRealData")
     // Command wrappers must not move a real command off command position.
     t.expectEqual(level("timeout 5 rm -rf /"), .danger, "timeoutWrapperRm")
@@ -2138,8 +2138,8 @@ private func riskCatchesEvasion(_ t: Checker) {
     // Config-abuse: an ancestor-name value must NOT mark everything nested
     // under it as scratch, and unsafe values are rejected by the sanitizer.
     RiskAssessor.userScratchDirs = RiskAssessor.sanitizedScratchDirs(["src"])
-    t.expectEqual(level("rm -rf /Users/evan/src/app/data"), .danger, "ancestorSegmentNotScratch")
-    t.expectEqual(level("cat /Users/evan/src/.ssh/id_rsa"), .danger, "ancestorSegmentNoCredSuppress")
+    t.expectEqual(level("rm -rf /Users/example/src/app/data"), .danger, "ancestorSegmentNotScratch")
+    t.expectEqual(level("cat /Users/example/src/.ssh/id_rsa"), .danger, "ancestorSegmentNoCredSuppress")
     RiskAssessor.userScratchDirs = RiskAssessor.sanitizedScratchDirs(["/", ".", "", "a/b", "x*"])
     t.expectTrue(RiskAssessor.userScratchDirs.isEmpty, "unsafeConfigValuesRejected")
     t.expectEqual(level("rm -rf /"), .danger, "slashConfigCannotNeuter")
