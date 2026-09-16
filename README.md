@@ -243,10 +243,11 @@ Codex rate-limit gauges show the general Codex quota only, not model-specific
 quota buckets. An unavailable window is hidden rather than carried forward.
 
 **5.** In **Monitoring Setup…**, allow notifications and choose which event
-categories should interrupt you. To keep alerts visible but silent
-(recommended — you want to *see* them, not get pinged on every flag), turn
-off **Play notification sounds**. System Settings remains the authority for
-macOS banner style and permission.
+categories should interrupt you. Turn on **Disable alerts** to stop automatic
+notch expansion and all Perch notifications while monitoring and detection
+history continue. To keep alerts visible but silent, turn off **Play
+notification sounds**. System Settings remains the authority for macOS banner
+style and permission.
 
 ### Option 2 — Build from source
 

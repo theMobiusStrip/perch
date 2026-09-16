@@ -32,6 +32,10 @@ enum Selftest {
         perchConfigCheckForUpdatesRoundTrip(t)
         perchConfigWorktreeStaleDaysRoundTrip(t)
         perchConfigNotificationPreferencesRoundTrip(t)
+        runNotificationPreferencesTests(t)
+        runNotificationDeliveryTests(t)
+        runAlertRoutingTests(t)
+        runNotchAttentionTests(t)
         perchConfigMonitoringVerificationRoundTrip(t)
         semVerParsesAndCompares(t)
         updateCheckDecision(t)
@@ -1179,11 +1183,12 @@ private extension Selftest {
     @MainActor
     static func perchConfigNotificationPreferencesRoundTrip(_ t: Checker) {
         t.suite("PerchConfig.notificationPreferencesRoundTrip")
-        let raw = #"{"notifyDangerousCalls":false,"notifyAttention":false,"notifyTaskCompletion":false,"notifyUsageThresholds":false,"playNotificationSounds":false,"hasCompletedSetup":true,"future":7}"#
+        let raw = #"{"alertsDisabled":true,"notifyDangerousCalls":false,"notifyAttention":false,"notifyTaskCompletion":false,"notifyUsageThresholds":false,"playNotificationSounds":false,"hasCompletedSetup":true,"future":7}"#
         guard let config = t.unwrap(
             try? JSONDecoder().decode(PerchConfig.self, from: Data(raw.utf8)),
             "decode") else { return }
         t.expectFalse(config.notifyDangerousCalls, "dangerOff")
+        t.expectTrue(config.alertsDisabled, "alertsDisabled")
         t.expectFalse(config.notifyAttention, "attentionOff")
         t.expectFalse(config.notifyTaskCompletion, "completionOff")
         t.expectFalse(config.notifyUsageThresholds, "usageOff")
@@ -1196,12 +1201,14 @@ private extension Selftest {
                 try? JSONDecoder().decode(PerchConfig.self, from: encoded),
                 "decodeAgain") else { return }
         t.expectFalse(decoded.notifyDangerousCalls, "dangerStillOff")
+        t.expectTrue(decoded.alertsDisabled, "alertsStillDisabled")
         t.expectTrue(decoded.hasCompletedSetup, "setupStillComplete")
 
         guard let defaults = t.unwrap(
             try? JSONDecoder().decode(PerchConfig.self, from: Data("{}".utf8)),
             "decodeDefaults") else { return }
         t.expectTrue(defaults.notifyDangerousCalls, "dangerDefaultsOn")
+        t.expectFalse(defaults.alertsDisabled, "alertsDefaultEnabled")
         t.expectTrue(defaults.notifyAttention, "attentionDefaultsOn")
         t.expectTrue(defaults.notifyTaskCompletion, "completionDefaultsOn")
         t.expectTrue(defaults.notifyUsageThresholds, "usageDefaultsOn")

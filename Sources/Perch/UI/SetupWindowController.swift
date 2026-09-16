@@ -334,6 +334,12 @@ private struct SetupView: View {
 
     private var notificationsSection: some View {
         section("Notifications", subtitle: "Choose which local events may interrupt you.") {
+            Toggle("Disable alerts", isOn: $preferences.alertsDisabled)
+                .toggleStyle(.switch)
+            Text("Stops automatic notch expansion and all Perch notifications. Monitoring and detections continue.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Divider()
             HStack(spacing: 10) {
                 statusIcon(notificationCheckState)
                 VStack(alignment: .leading, spacing: 2) {
@@ -358,6 +364,7 @@ private struct SetupView: View {
                 Toggle("Play notification sounds", isOn: $preferences.sounds)
             }
             .toggleStyle(.switch)
+            .disabled(preferences.alertsDisabled)
         }
     }
 

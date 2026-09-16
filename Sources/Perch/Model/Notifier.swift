@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import PerchCore
 import UserNotifications
 
@@ -59,6 +60,13 @@ enum NotificationAuthorizationState: String, Sendable {
 /// back to PerchLog only.
 @MainActor
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
+    /// Allows the selftest to observe the real requests without using the OS
+    /// notification center or posting banners on the machine running tests.
+    struct Delivery {
+        var send: (UNNotificationRequest) -> Void
+        var removePending: () -> Void
+    }
+
     private enum Route: String {
         case detections
         case sessions
@@ -80,6 +88,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     private let sessions: SessionStore
     private let preferences: NotificationPreferences
+    private let delivery: Delivery?
+    private var preferenceSubscription: AnyCancellable?
     var onOpenDetections: ((UUID?) -> Void)?
     var onOpenSessions: ((SessionKey?) -> Void)?
     var onOpenUsage: (() -> Void)?
@@ -101,23 +111,34 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private let notificationsAvailable: Bool =
         Bundle.main.bundlePath.hasSuffix(".app") && Bundle.main.bundleIdentifier != nil
 
-    init(sessions: SessionStore, preferences: NotificationPreferences) {
+    init(sessions: SessionStore, preferences: NotificationPreferences,
+         delivery: Delivery? = nil, startTimer: Bool = true) {
         self.sessions = sessions
         self.preferences = preferences
+        self.delivery = delivery
         super.init()
-        let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.sweepStuckSessions()
+        if startTimer {
+            let timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    self?.sweepStuckSessions()
+                }
             }
+            timer.tolerance = 10
+            stuckTimer = timer
         }
-        timer.tolerance = 10
-        stuckTimer = timer
-        if !notificationsAvailable {
+        if delivery == nil, !notificationsAvailable {
             PerchLog.info("Not running from a .app bundle — notifications are log-only",
                           category: "notify")
-        } else {
+        } else if delivery == nil {
             configureNotificationCenter()
         }
+        preferenceSubscription = preferences.$alertsDisabled
+            .removeDuplicates()
+            .sink { [weak self] disabled in
+                // Use the emitted value: @Published sends before the property
+                // itself changes. This also clears pending requests on launch.
+                if disabled { self?.removePendingNotifications() }
+            }
     }
 
     deinit {
@@ -168,7 +189,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Public notification entry points
 
     func notifyAttention(session: Session, reason: String) {
-        guard preferences.attention else { return }
+        guard !preferences.alertsDisabled && preferences.attention else { return }
         guard !coalescer.shouldSuppressAttention(for: session.key) else {
             PerchLog.info("Coalesced attention behind danger alert for \(session.key.id)",
                           category: "notify")
@@ -188,7 +209,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// prompt (a whitelisted or auto-approved dangerous call is exactly the
     /// one you must hear about).
     func notifyRisk(session: Session, entry: RiskFeed.Entry) {
-        guard preferences.dangerousCalls else { return }
+        guard !preferences.alertsDisabled && preferences.dangerousCalls else { return }
         // RiskFeed has already collapsed duplicate hook callbacks into one
         // retained entry. Key this final guard by that entry so two distinct
         // dangerous calls with the same tool/findings are never conflated.
@@ -206,7 +227,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func notifyTaskComplete(session: Session, message: String?) {
-        guard preferences.taskCompletion else { return }
+        guard !preferences.alertsDisabled && preferences.taskCompletion else { return }
         let fingerprint = "complete|\(session.key.agent.rawValue)|\(session.key.id)"
         guard shouldFire(fingerprint) else { return }
         let body: String
@@ -225,7 +246,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func notifyUsageThreshold(label: String, pct: Double) {
-        guard preferences.usageThresholds else { return }
+        guard !preferences.alertsDisabled && preferences.usageThresholds else { return }
         let fingerprint = "usage|\(label)"
         guard shouldFire(fingerprint) else { return }
         post(title: "\(label) usage at \(Int(pct.rounded()))%",
@@ -241,8 +262,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// A session sitting in waitingPermission/waitingInput for more than
     /// 5 minutes gets exactly one "still waiting" nudge per episode.
-    private func sweepStuckSessions() {
-        let now = Date()
+    func sweepStuckSessions(at now: Date = Date()) {
         var stillWaiting = Set<SessionKey>()
         for session in sessions.sessions where session.state.needsAttention {
             stillWaiting.insert(session.key)
@@ -258,6 +278,21 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Internals
 
+    private func removePendingNotifications() {
+        if let delivery {
+            delivery.removePending()
+        } else if notificationsAvailable {
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        }
+    }
+
+    /// Recheck at presentation time: a request may already be in flight when
+    /// alerts are disabled. Sound can also have changed since submission.
+    func presentationOptions(hasSound: Bool) -> UNNotificationPresentationOptions {
+        guard !preferences.alertsDisabled else { return [] }
+        return hasSound && preferences.sounds ? [.banner, .list, .sound] : [.banner, .list]
+    }
+
     private func shouldFire(_ fingerprint: String) -> Bool {
         let now = Date()
         // Prune stale fingerprints so the map never grows unbounded.
@@ -272,7 +307,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private func post(title: String, body: String, threadId: String,
                       route: Route, sessionKey: SessionKey?, detectionID: UUID? = nil,
                       category: String) {
-        guard notificationsAvailable else {
+        guard delivery != nil || notificationsAvailable else {
             PerchLog.info("NOTIFY (log-only): \(title) — \(body)", category: "notify")
             return
         }
@@ -294,6 +329,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let request = UNNotificationRequest(identifier: UUID().uuidString,
                                             content: content,
                                             trigger: nil)
+        if let delivery {
+            delivery.send(request)
+            return
+        }
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
                 PerchLog.warn("Notification delivery failed: \(error.localizedDescription)",
@@ -328,10 +367,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        let options: UNNotificationPresentationOptions = notification.request.content.sound == nil
-            ? [.banner, .list]
-            : [.banner, .list, .sound]
-        completionHandler(options)
+        let hasSound = notification.request.content.sound != nil
+        Task { @MainActor [weak self] in
+            completionHandler(self?.presentationOptions(hasSound: hasSound) ?? [])
+        }
     }
 
     nonisolated func userNotificationCenter(

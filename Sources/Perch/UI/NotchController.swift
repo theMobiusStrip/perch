@@ -19,6 +19,36 @@ final class NotchViewState: ObservableObject {
     @Published var pillSize = NotchGeometry.fallbackPillSize
     @Published var expandedSize = NotchGeometry.expandedMaxSize
     weak var controller: NotchController?
+
+    private var autoExpandedForAttention = false
+
+    func expand(focusing sessionKey: SessionKey? = nil) {
+        autoExpandedForAttention = false
+        if let sessionKey {
+            page = .sessions
+            focusedSessionKey = sessionKey
+            sessionFocusRequest += 1
+        }
+        isExpanded = true
+    }
+
+    func expandForAttention() {
+        hasAttention = true
+        if !isExpanded { autoExpandedForAttention = true }
+        isExpanded = true
+    }
+
+    /// Retain ownership until collapse so muting during the normal delayed
+    /// collapse can still dismiss a panel that opened automatically.
+    func clearAttention() -> Bool {
+        hasAttention = false
+        return autoExpandedForAttention
+    }
+
+    func collapse() {
+        autoExpandedForAttention = false
+        isExpanded = false
+    }
 }
 
 /// Owns the notch panel window: builds it on the right screen, drives
@@ -51,7 +81,6 @@ final class NotchController {
     private var localMouseMonitor: Any?
     private var hoverExpandWorkItem: DispatchWorkItem?
     private var collapseWorkItem: DispatchWorkItem?
-    private var autoExpandedForAttention = false
 
     private static let expandAnimation = Animation.spring(response: 0.5, dampingFraction: 0.78)
     private static let collapseAnimation = Animation.spring(response: 0.36, dampingFraction: 0.88)
@@ -112,17 +141,18 @@ final class NotchController {
     }
 
     func expand(focusing sessionKey: SessionKey? = nil) {
+        expand(forAttention: false, focusing: sessionKey)
+    }
+
+    private func expand(forAttention: Bool, focusing sessionKey: SessionKey? = nil) {
         guard panel != nil else { return }
-        if let sessionKey {
-            state.page = .sessions
-            state.focusedSessionKey = sessionKey
-            state.sessionFocusRequest += 1
-        }
         cancelScheduledCollapse()
         cancelScheduledHoverExpand()
-        if !state.isExpanded {
-            withAnimation(Self.expandAnimation) {
-                state.isExpanded = true
+        withAnimation(Self.expandAnimation) {
+            if forAttention {
+                state.expandForAttention()
+            } else {
+                state.expand(focusing: sessionKey)
             }
         }
         integrity.refresh()
@@ -133,11 +163,11 @@ final class NotchController {
     func collapse() {
         cancelScheduledCollapse()
         cancelScheduledHoverExpand()
-        autoExpandedForAttention = false
-        guard state.isExpanded else { return }
+        let wasExpanded = state.isExpanded
         withAnimation(Self.collapseAnimation) {
-            state.isExpanded = false
+            state.collapse()
         }
+        guard wasExpanded else { return }
         updateInteractiveRect()
         surrenderKeyStatus()
     }
@@ -146,18 +176,18 @@ final class NotchController {
     func attention() {
         state.hasAttention = true
         show()
-        if !state.isExpanded { autoExpandedForAttention = true }
-        expand()
+        expand(forAttention: true)
         // Deliberately NO makeKey() here: grabbing key status on an attention
         // event would silently swallow whatever the user is typing in the
         // terminal. The panel takes key only on mouseDown inside it
         // (NotchPanel.sendEvent), after which Esc/arrows work.
     }
 
-    func attentionCleared() {
-        state.hasAttention = false
-        if autoExpandedForAttention {
-            autoExpandedForAttention = false
+    func attentionCleared(immediately: Bool = false) {
+        guard state.clearAttention() else { return }
+        if immediately {
+            collapse()
+        } else {
             scheduleCollapse(after: 0.8)
         }
     }

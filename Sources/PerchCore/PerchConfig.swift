@@ -27,6 +27,9 @@ public struct PerchConfig: Codable, Sendable {
     public var worktreeStaleDays: Int
     /// Per-category notification preferences. Defaults preserve the behavior
     /// from before preferences were exposed.
+    /// Suppresses automatic notch expansion and all Perch notifications while
+    /// leaving monitoring, detections, and the per-category choices intact.
+    public var alertsDisabled: Bool
     public var notifyDangerousCalls: Bool
     public var notifyAttention: Bool
     public var notifyTaskCompletion: Bool
@@ -49,6 +52,7 @@ public struct PerchConfig: Codable, Sendable {
         self.scratchDirs = []
         self.checkForUpdates = true
         self.worktreeStaleDays = PerchConfig.defaultWorktreeStaleDays
+        self.alertsDisabled = false
         self.notifyDangerousCalls = true
         self.notifyAttention = true
         self.notifyTaskCompletion = true
@@ -65,6 +69,7 @@ public struct PerchConfig: Codable, Sendable {
         case scratchDirs
         case checkForUpdates
         case worktreeStaleDays
+        case alertsDisabled
         case notifyDangerousCalls
         case notifyAttention
         case notifyTaskCompletion
@@ -89,6 +94,9 @@ public struct PerchConfig: Codable, Sendable {
         }
         if let v = raw["worktreeStaleDays"]?.int {
             config.worktreeStaleDays = max(1, v)
+        }
+        if let v = raw["alertsDisabled"]?.boolValue {
+            config.alertsDisabled = v
         }
         if let v = raw["notifyDangerousCalls"]?.boolValue {
             config.notifyDangerousCalls = v
@@ -137,6 +145,7 @@ public struct PerchConfig: Codable, Sendable {
         if worktreeStaleDays != PerchConfig.defaultWorktreeStaleDays {
             obj["worktreeStaleDays"] = .number(Double(worktreeStaleDays))
         }
+        if alertsDisabled { obj["alertsDisabled"] = .bool(true) }
         if !notifyDangerousCalls { obj["notifyDangerousCalls"] = .bool(false) }
         if !notifyAttention { obj["notifyAttention"] = .bool(false) }
         if !notifyTaskCompletion { obj["notifyTaskCompletion"] = .bool(false) }
