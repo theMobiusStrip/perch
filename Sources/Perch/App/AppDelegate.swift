@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import PerchCore
 
 /// Menu-bar / notch actions surfaced by StatusItemController.
@@ -50,12 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupWindow: SetupWindowController?
     private var recentDetectionsWindow: RecentDetectionsWindowController?
     private var insightsWindow: InsightsWindowController?
-    private var cancellables = Set<AnyCancellable>()
-    /// True while the notch is showing attention we raised via onAttention.
-    /// Lets the session-publish observer clear notification-driven
-    /// (waiting-input) attention, which has no RiskFeed entry and
-    /// therefore never triggers onEmpty.
-    private var attentionPending = false
+    private var alertRouting: AlertRouting?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         PerchLog.info("Perch launching")
@@ -167,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                           health: monitoringHealth,
                                           updateChecker: updateChecker,
                                           worktrees: worktreeModel,
+                                          preferences: notificationPreferences,
                                           actions: actions)
 
         wireCrossCutting()
@@ -254,57 +249,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func wireCrossCutting() {
-        sessionStore.onAttention = { [weak self] session, reason in
-            self?.attentionPending = true
-            self?.notch?.attention()
-            self?.notifier?.notifyAttention(session: session, reason: reason)
-        }
-        sessionStore.onTaskComplete = { [weak self] session, message in
-            self?.notifier?.notifyTaskComplete(session: session, message: message)
-        }
-        sessionStore.onRiskDetected = { [weak self] session, entry in
-            self?.attentionPending = true
-            self?.notch?.attention()
-            self?.notifier?.notifyRisk(session: session, entry: entry)
-        }
-        riskFeed.onEmpty = { [weak self] in
-            self?.clearNotchAttention()
-        }
-        // Notification-driven attention (waiting-input) never adds a feed
-        // entry, so onEmpty alone would leave the panel expanded, key, and
-        // amber forever. Clear it once the session leaves its waiting state
-        // (user answered / stop / session end).
-        sessionStore.$sessions
-            .sink { [weak self] sessions in
-                MainActor.assumeIsolated {
-                    self?.sessionsDidPublish(sessions)
-                }
-            }
-            .store(in: &cancellables)
-        usageStore.onThreshold = { [weak self] label, pct in
-            self?.notifier?.notifyUsageThreshold(label: label, pct: pct)
-        }
-        notifier?.onOpenDetections = { [weak self] id in
+        guard let notifier else { return }
+        alertRouting = AlertRouting(sessions: sessionStore, usage: usageStore,
+            riskFeed: riskFeed, preferences: notificationPreferences, notifier: notifier,
+            showAttention: { [weak self] in self?.notch?.attention() },
+            clearAttention: { [weak self] immediately in
+                self?.notch?.attentionCleared(immediately: immediately)
+            })
+        notifier.onOpenDetections = { [weak self] id in
             self?.openRecentDetectionsWindow(focusing: id)
         }
-        notifier?.onOpenSessions = { [weak self] key in
+        notifier.onOpenSessions = { [weak self] key in
             self?.notch?.expand(focusing: key)
         }
-        notifier?.onOpenUsage = { [weak self] in
+        notifier.onOpenUsage = { [weak self] in
             self?.openUsageHistoryWindow()
         }
-    }
-
-    private func sessionsDidPublish(_ sessions: [Session]) {
-        guard attentionPending,
-              riskFeed.isEmpty,
-              !sessions.contains(where: { $0.needsAttention }) else { return }
-        clearNotchAttention()
-    }
-
-    private func clearNotchAttention() {
-        attentionPending = false
-        notch?.attentionCleared()
     }
 
     private func makeActions() -> AppActions {

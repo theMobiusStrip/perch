@@ -16,6 +16,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let health: MonitoringHealth
     private let updateChecker: UpdateChecker
     private let worktrees: WorktreeModel
+    private let preferences: NotificationPreferences
     private let actions: AppActions
 
     private let statusItem: NSStatusItem
@@ -25,7 +26,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     init(sessions: SessionStore, usage: UsageStore, riskFeed: RiskFeed,
          posture: SecurityPosture, health: MonitoringHealth,
          updateChecker: UpdateChecker,
-         worktrees: WorktreeModel, actions: AppActions) {
+         worktrees: WorktreeModel, preferences: NotificationPreferences,
+         actions: AppActions) {
         self.sessions = sessions
         self.usage = usage
         self.riskFeed = riskFeed
@@ -33,6 +35,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.health = health
         self.updateChecker = updateChecker
         self.worktrees = worktrees
+        self.preferences = preferences
         self.actions = actions
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -133,6 +136,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(actionItem("Show/Hide Notch Panel", #selector(toggleNotch), key: "n"))
+        let alertsItem = actionItem("Disable Alerts", #selector(toggleAlerts))
+        alertsItem.state = preferences.alertsDisabled ? .on : .off
+        menu.addItem(alertsItem)
         menu.addItem(actionItem("Insights…", #selector(openInsights), key: "i"))
         menu.addItem(actionItem("Token Usage…", #selector(openUsageHistory), key: "t"))
         menu.addItem(actionItem("Worktrees…", #selector(openWorktrees), key: "w"))
@@ -343,6 +349,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Actions
 
     @objc private func toggleNotch() { actions.toggleNotch() }
+    @objc private func toggleAlerts() { preferences.alertsDisabled.toggle() }
     @objc private func openDebugWindow() { actions.openDebugWindow() }
     @objc private func openInsights() { actions.openInsights() }
     @objc private func openUsageHistory() { actions.openUsageHistory() }
